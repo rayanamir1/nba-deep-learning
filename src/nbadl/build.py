@@ -71,28 +71,59 @@ def load_schedule(con, lake: RawLake) -> int:
     return _replace(con, "schedule", df)
 
 
+def home_team_id(sides: list[dict], scheduled_home: int | None) -> int | None:
+    """Home team of a game from its two LeagueGameFinder rows. Neutral-site games (Paris, Mexico City, Cup
+    finals) print '@' for both teams, so fall back to the schedule's designated home team."""
+    vs = [r["TEAM_ID"] for r in sides if " vs. " in r["MATCHUP"]]
+    return vs[0] if len(vs) == 1 else scheduled_home
+
+
 # --- games ------------------------------------------------------------------------
 def load_games(con, lake: RawLake) -> int:
     tips = dict(con.execute("SELECT game_id, tip_utc FROM schedule").fetchall())
+    sched_home = dict(con.execute("SELECT game_id, home_team_id FROM schedule").fetchall())
     rows = []
     for rec in lake.iter("games"):
         season, stype = rec.key.rsplit("_", 1)
-        by_game: dict[str, dict] = {}
+        by_game: dict[str, list[dict]] = {}
         for r in result_set(rec.payload, "LeagueGameFinderResults"):
-            g = by_game.setdefault(r["GAME_ID"], {"game_id": r["GAME_ID"], "season": season, "season_type": stype,
-                                                  "game_date": date.fromisoformat(r["GAME_DATE"][:10])})
-            side = "home" if " vs. " in r["MATCHUP"] else "away"
-            g[f"{side}_team_id"] = r["TEAM_ID"]
-            g[f"{side}_pts"] = r["PTS"]
-        for g in by_game.values():
-            if "home_team_id" not in g or "away_team_id" not in g:
-                log.warning("game %s missing a side; skipped", g["game_id"])
+            by_game.setdefault(r["GAME_ID"], []).append(r)
+        for gid, sides in by_game.items():
+            home = home_team_id(sides, sched_home.get(gid))
+            if len(sides) != 2 or home is None:
+                log.warning("game %s missing a side; skipped", gid)
                 continue
-            tip = tips.get(g["game_id"])
-            g["tip_utc"] = tip
-            g["available_at"] = wh.result_available_at(g["game_date"], tip)
-            rows.append(g)
-    return _replace(con, "games", pd.DataFrame(rows))
+            h = next(r for r in sides if r["TEAM_ID"] == home)
+            a = next(r for r in sides if r["TEAM_ID"] != home)
+            gdate = date.fromisoformat(h["GAME_DATE"][:10])
+            tip = tips.get(gid)
+            rows.append({"game_id": gid, "season": season, "season_type": stype, "game_date": gdate,
+                         "home_team_id": h["TEAM_ID"], "away_team_id": a["TEAM_ID"],
+                         "home_pts": h["PTS"], "away_pts": a["PTS"], "tip_utc": tip,
+                         "available_at": wh.result_available_at(gdate, tip)})
+    return _replace(con, "games", pd.DataFrame(rows).drop_duplicates("game_id"))
+
+
+# --- team box lines -----------------------------------------------------------------
+def load_team_games(con, lake: RawLake) -> int:
+    """One row per team per game with the box-score columns possession estimates need."""
+    avail = dict(con.execute("SELECT game_id, available_at FROM games").fetchall())
+    sched_home = dict(con.execute("SELECT game_id, home_team_id FROM schedule").fetchall())
+    rows = []
+    for rec in lake.iter("games"):
+        by_game: dict[str, list[dict]] = {}
+        for r in result_set(rec.payload, "LeagueGameFinderResults"):
+            if r["GAME_ID"] in avail and r["PTS"] is not None:
+                by_game.setdefault(r["GAME_ID"], []).append(r)
+        for gid, sides in by_game.items():
+            if len(sides) != 2:
+                continue
+            home = home_team_id(sides, sched_home.get(gid))
+            for r, o in (sides, sides[::-1]):
+                rows.append({"game_id": gid, "team_id": r["TEAM_ID"], "opp_team_id": o["TEAM_ID"],
+                             "is_home": r["TEAM_ID"] == home, "pts": r["PTS"], "fga": r["FGA"], "fta": r["FTA"],
+                             "oreb": r["OREB"], "tov": r["TOV"], "available_at": avail[gid]})
+    return _replace(con, "team_games", pd.DataFrame(rows))
 
 
 # --- officials ----------------------------------------------------------------------
@@ -238,6 +269,7 @@ def build_all(con, lake: RawLake) -> dict:
     return {
         "schedule": load_schedule(con, lake),
         "games": load_games(con, lake),
+        "team_games": load_team_games(con, lake),
         "officials": load_officials(con, lake),
         "pbp": load_pbp(con, lake),
         "odds": load_odds_history(con, lake),

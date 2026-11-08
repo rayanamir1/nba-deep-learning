@@ -77,7 +77,7 @@ def _bet_line(con, game_id: str) -> float | None:
 
 
 # one numeric column per guarded table to corrupt when proving the model cannot see the future
-_CORRUPT = {"games": "home_pts = home_pts + 999", "odds_lines": "total = total + 50",
+_CORRUPT = {"games": "home_pts = home_pts + 999", "team_games": "pts = pts + 99", "odds_lines": "total = total + 50",
             "possessions": "points = points + 99", "stints": "points_a = points_a + 99",
             "officials": "official_id = official_id + 1"}
 

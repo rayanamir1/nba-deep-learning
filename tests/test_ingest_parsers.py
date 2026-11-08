@@ -237,3 +237,13 @@ def test_loose_name_variants_never_spoil_exact_names():
     payload = {"game": {"gameId": "x", "actions": [
         _sub("SUB: Carter FOR Guy", 1, 9), _sub("SUB: Carter Jr. FOR Guy", 2, 9)]}}
     assert [e.player_in_id for e in events_from_v3(payload, roster)] == [2, 1]
+
+
+def test_home_team_for_neutral_site_games_comes_from_the_schedule():
+    from nbadl.build import home_team_id
+
+    normal = [{"TEAM_ID": 1, "MATCHUP": "AAA vs. BBB"}, {"TEAM_ID": 2, "MATCHUP": "BBB @ AAA"}]
+    neutral = [{"TEAM_ID": 1, "MATCHUP": "AAA @ BBB"}, {"TEAM_ID": 2, "MATCHUP": "BBB @ AAA"}]
+    assert home_team_id(normal, scheduled_home=2) == 1   # the matchup text wins when it is clear
+    assert home_team_id(neutral, scheduled_home=2) == 2  # both '@': use the schedule
+    assert home_team_id(neutral, scheduled_home=None) is None

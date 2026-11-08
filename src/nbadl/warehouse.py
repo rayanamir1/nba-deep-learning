@@ -33,6 +33,11 @@ CREATE TABLE IF NOT EXISTS games (
     home_team_id BIGINT, away_team_id BIGINT, home_pts INTEGER, away_pts INTEGER,
     tip_utc TIMESTAMPTZ, available_at TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS team_games (
+    game_id VARCHAR, team_id BIGINT, opp_team_id BIGINT, is_home BOOLEAN,
+    pts INTEGER, fga INTEGER, fta INTEGER, oreb INTEGER, tov INTEGER,
+    available_at TIMESTAMPTZ NOT NULL
+);
 CREATE TABLE IF NOT EXISTS schedule (
     game_id VARCHAR PRIMARY KEY, game_date DATE, home_team_id BIGINT, away_team_id BIGINT,
     tip_utc TIMESTAMPTZ, available_at TIMESTAMPTZ NOT NULL
@@ -59,7 +64,7 @@ CREATE TABLE IF NOT EXISTS stints (
 );
 """
 
-GUARDED_TABLES = ("games", "schedule", "officials", "odds_lines", "possessions", "stints")
+GUARDED_TABLES = ("games", "team_games", "schedule", "officials", "odds_lines", "possessions", "stints")
 
 
 def connect(path: Path | str | None = None) -> duckdb.DuckDBPyConnection:
