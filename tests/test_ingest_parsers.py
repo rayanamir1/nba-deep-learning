@@ -103,3 +103,57 @@ def test_team_lookup_resolves_sbr_abbreviations():
     sbr_names = ["BK", "GS", "NO", "NY", "PHO", "SA", "LAL", "LAC", "PHI", "UTA", "WAS"]
     assert [n for n in sbr_names if _norm(n) not in look] == []
     assert look[_norm("NY")] == look[_norm("NYK")]
+
+
+class _FakeResp:
+    def __init__(self, status, text=""):
+        self.status_code, self.text = status, text
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import requests
+
+            raise requests.HTTPError(str(self.status_code))
+
+
+class _FakeSession:
+    def __init__(self, statuses, text):
+        self.statuses, self.text, self.calls = list(statuses), text, 0
+
+    def get(self, *a, **k):
+        self.calls += 1
+        return _FakeResp(self.statuses.pop(0), self.text)
+
+
+def _sbr(statuses, monkeypatch, tmp_path):
+    from datetime import date
+
+    from nbadl.ingest import sbr
+
+    monkeypatch.setattr(sbr.time, "sleep", lambda s: None)
+    page = '<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"oddsTables":[]}}}</script>'
+    sess = _FakeSession(statuses, page)
+    return sbr.SbrIngest(RawLake(tmp_path), interval_s=0, session=sess), sess, date(2019, 10, 5)
+
+
+def test_sbr_retries_transient_5xx(monkeypatch, tmp_path):
+    ing, sess, d = _sbr([502, 502, 200], monkeypatch, tmp_path)
+    assert ing.history(d) is True and sess.calls == 3
+
+
+def test_sbr_does_not_retry_404(monkeypatch, tmp_path):
+    import requests
+
+    ing, sess, d = _sbr([404, 200], monkeypatch, tmp_path)
+    with pytest.raises(requests.HTTPError):
+        ing.history(d)
+    assert sess.calls == 1
+
+
+def test_sbr_gives_up_after_retries(monkeypatch, tmp_path):
+    import requests
+
+    ing, sess, d = _sbr([503] * 10, monkeypatch, tmp_path)
+    with pytest.raises(requests.HTTPError):
+        ing.history(d)
+    assert sess.calls == 5

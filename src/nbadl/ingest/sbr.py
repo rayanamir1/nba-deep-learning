@@ -22,6 +22,7 @@ Use is subject to SBR's terms of service; keep request rates low (one page per d
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, asdict
@@ -29,6 +30,8 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 import requests
+
+log = logging.getLogger(__name__)
 
 from ..lake import RawLake, utcnow
 
@@ -121,6 +124,11 @@ def parse_odds_tables(tables: list[dict]) -> list[TotalLine]:
     return out
 
 
+RETRIES = 4
+RETRY_STATUS = {429, 500, 502, 503, 504}
+BACKOFF_S = 5.0
+
+
 class SbrIngest:
     def __init__(self, lake: RawLake | None = None, interval_s: float = 3.0, session: requests.Session | None = None):
         self.lake = lake or RawLake()
@@ -129,13 +137,24 @@ class SbrIngest:
         self._last = 0.0
 
     def _get(self, d: date) -> list[dict]:
-        wait = self.interval - (time.monotonic() - self._last)
-        if wait > 0:
-            time.sleep(wait)
-        self._last = time.monotonic()
-        r = self.session.get(TOTALS_URL.format(d=d.isoformat()), headers=HEADERS, timeout=30)
-        r.raise_for_status()
-        return extract_odds_tables(r.text)
+        for attempt in range(RETRIES + 1):
+            wait = self.interval - (time.monotonic() - self._last)
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.monotonic()
+            try:
+                r = self.session.get(TOTALS_URL.format(d=d.isoformat()), headers=HEADERS, timeout=30)
+                if r.status_code in RETRY_STATUS:
+                    raise requests.HTTPError(f"{r.status_code} for {d}", response=r)
+            except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as e:
+                if attempt == RETRIES:
+                    raise
+                backoff = BACKOFF_S * 3**attempt
+                log.warning("SBR %s attempt %d failed (%s); retrying in %.0fs", d, attempt + 1, e, backoff)
+                time.sleep(backoff)
+                continue
+            r.raise_for_status()  # other 4xx are real errors, not transient
+            return extract_odds_tables(r.text)
 
     def history(self, d: date) -> bool:
         """Fetch a past date once. Returns True if a request was made."""
