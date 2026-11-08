@@ -1,2 +1,0 @@
-[console_scripts]
-nbadl = nbadl.cli:main
