@@ -109,7 +109,7 @@ def events_from_v3(payload: dict, roster: dict[int, list[dict]] | None = None) -
             team, player = player, None  # team-credited event: personId holds the team id
         kw: dict = {}
         if at == "Free Throw":
-            made = not desc.upper().startswith("MISS")
+            made = not desc.startswith("MISS ")  # case-sensitive: "Missi" (a player) is a make
             kind = Kind.FT_MADE if made else Kind.FT_MISSED
             low = (sub + " " + desc).lower()
             kw["ft_type"] = "technical" if "technical" in low else "flagrant" if "flagrant" in low else "regular"

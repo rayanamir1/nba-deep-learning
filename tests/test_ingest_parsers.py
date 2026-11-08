@@ -157,3 +157,20 @@ def test_sbr_gives_up_after_retries(monkeypatch, tmp_path):
     with pytest.raises(requests.HTTPError):
         ing.history(d)
     assert sess.calls == 5
+
+
+def _ft(desc, aid):
+    return {"actionId": aid, "actionNumber": aid, "period": 1, "clock": "PT10M00.00S", "actionType": "Free Throw",
+            "subType": "Free Throw 1 of 2", "description": desc, "teamId": 1, "personId": 7,
+            "scoreHome": "0", "scoreAway": "0"}
+
+
+def test_free_throw_by_a_player_whose_name_starts_with_miss_is_made():
+    from nbadl.possessions import Kind
+
+    payload = {"game": {"gameId": "x", "actions": [
+        _ft("Missi Free Throw 1 of 2 (2 PTS)", 1),         # Yves Missi made it
+        _ft("MISS Missi Free Throw 2 of 2", 2),            # and then missed one
+        _ft("MISS Fears Free Throw 1 of 2", 3)]}}
+    kinds = [(e.kind, e.points) for e in events_from_v3(payload)]
+    assert kinds == [(Kind.FT_MADE, 1), (Kind.FT_MISSED, 0), (Kind.FT_MISSED, 0)]
