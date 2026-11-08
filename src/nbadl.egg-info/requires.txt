@@ -1,0 +1,9 @@
+duckdb>=1.0
+pandas>=2.0
+pyarrow>=15
+requests>=2.31
+nba_api>=1.10
+beautifulsoup4>=4.12
+
+[dev]
+pytest>=8

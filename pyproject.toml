@@ -1,0 +1,30 @@
+[project]
+name = "nbadl"
+version = "0.1.0"
+description = "Point-in-time NBA game-totals model"
+requires-python = ">=3.11"
+dependencies = [
+  "duckdb>=1.0",
+  "pandas>=2.0",
+  "pyarrow>=15",
+  "requests>=2.31",
+  "nba_api>=1.10",
+  "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+nbadl = "nbadl.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
