@@ -222,3 +222,18 @@ def test_sub_by_first_name_only_is_a_weak_fallback():
     roster = {1: [_player(5, "Hansen", "Yang"), _player(9, "Out", "Guy")]}
     payload = {"game": {"gameId": "x", "actions": [_sub("SUB: Hansen FOR Guy", 1, 9)]}}
     assert [e.player_in_id for e in events_from_v3(payload, roster)] == [5]
+
+
+def test_sub_names_ignore_generational_suffix_disagreements():
+    roster = {1: [_player(1, "Brandon", "Boston"), _player(2, "Trey", "Jemison III"), _player(3, "Jimmy", "Butler III"),
+                  _player(9, "Out", "Guy")]}
+    payload = {"game": {"gameId": "x", "actions": [
+        _sub("SUB: Boston Jr. FOR Guy", 1, 9), _sub("SUB: Jemison FOR Guy", 2, 9), _sub("SUB: Butler FOR Guy", 3, 9)]}}
+    assert [e.player_in_id for e in events_from_v3(payload, roster)] == [1, 2, 3]
+
+
+def test_loose_name_variants_never_spoil_exact_names():
+    roster = {1: [_player(1, "Wendell", "Carter Jr."), _player(2, "Jevon", "Carter"), _player(9, "Out", "Guy")]}
+    payload = {"game": {"gameId": "x", "actions": [
+        _sub("SUB: Carter FOR Guy", 1, 9), _sub("SUB: Carter Jr. FOR Guy", 2, 9)]}}
+    assert [e.player_in_id for e in events_from_v3(payload, roster)] == [2, 1]

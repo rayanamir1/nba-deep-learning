@@ -63,35 +63,44 @@ def _collapse(key: str) -> str:
     return re.sub(r"(oe|ue|ae)", lambda m: m[1][0], key)
 
 
+_SUFFIX = re.compile(r"\s+(jr\.?|sr\.?|ii|iii|iv|v)$")
+
+
+def _variants(name: str) -> list[str]:
+    """Keys from exact to loose: exact, transliteration-collapsed, suffix-stripped, both."""
+    k = _norm(name)
+    stripped = _SUFFIX.sub("", k)
+    return [k, _collapse(k), stripped, _collapse(stripped)]
+
+
 class _Names:
     """Per-team name -> player id index. Ambiguous names map to None.
 
-    Strong names (nameI, family name, full name, first-name prefixes) are exact. Weak names (first name
-    alone, for sources that print 'Hansen' for Hansen Yang) never override a strong one.
+    Each looseness level (see _variants) is its own layer and lookup goes exact-first, so a loose form of one
+    player ('Carter Jr.' -> 'carter') can never steal or spoil another player's exact name ('Carter').
+    Weak names (first name alone, for sources that print 'Hansen' for Hansen Yang) are the last resort.
     """
 
     def __init__(self) -> None:
-        self._idx: dict[int, dict[str, int | None]] = {}
+        self._idx: dict[int, list[dict[str, int | None]]] = {}
         self._weak: dict[int, dict[str, int | None]] = {}
 
     @staticmethod
-    def _keys(name: str) -> set[str]:
-        k = _norm(name)
-        return {k, _collapse(k)}
-
-    def _put(self, idx: dict[int, dict[str, int | None]], team: int, pid: int, names) -> None:
-        d = idx.setdefault(team, {})
-        for n in names:
-            if not n:
-                continue
-            for k in self._keys(n):
-                d[k] = None if (k in d and d[k] != pid) else pid  # two teammates share it
+    def _set(d: dict, k: str, pid: int) -> None:
+        d[k] = None if (k in d and d[k] != pid) else pid  # two teammates share it
 
     def add(self, team: int, pid: int, *names: str | None) -> None:
-        self._put(self._idx, team, pid, names)
+        layers = self._idx.setdefault(team, [{} for _ in range(4)])
+        for n in names:
+            if n:
+                for layer, k in zip(layers, _variants(n)):
+                    self._set(layer, k, pid)
 
     def add_weak(self, team: int, pid: int, *names: str | None) -> None:
-        self._put(self._weak, team, pid, names)
+        d = self._weak.setdefault(team, {})
+        for n in names:
+            if n:
+                self._set(d, _norm(n), pid)
 
     def add_roster_player(self, team: int, p: dict) -> None:
         pid = int(p["personId"])
@@ -102,9 +111,9 @@ class _Names:
         self.add_weak(team, pid, first)
 
     def resolve(self, team: int, name: str) -> int | None:
-        for k in (_norm(name), _collapse(_norm(name))):
-            if k in self._idx.get(team, {}):
-                return self._idx[team][k]
+        for layer, k in zip(self._idx.get(team, []), _variants(name)):
+            if k in layer:
+                return layer[k]
         return self._weak.get(team, {}).get(_norm(name))
 
 
