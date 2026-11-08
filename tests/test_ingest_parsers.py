@@ -94,3 +94,12 @@ def test_v3_full_game_matches_official_score():
     poss = count_possessions(g)
     assert all(88 <= n <= 100 for n in poss.values()), poss
     assert sum(s.seconds for s in g.stints) == 48 * 60
+
+
+def test_team_lookup_resolves_sbr_abbreviations():
+    from nbadl.build import _norm, team_lookup
+
+    look = team_lookup()
+    sbr_names = ["BK", "GS", "NO", "NY", "PHO", "SA", "LAL", "LAC", "PHI", "UTA", "WAS"]
+    assert [n for n in sbr_names if _norm(n) not in look] == []
+    assert look[_norm("NY")] == look[_norm("NYK")]

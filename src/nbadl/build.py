@@ -166,6 +166,9 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", s).strip()
 
 
+SBR_ABBREV_ALIASES = {"BK": "BKN", "GS": "GSW", "NO": "NOP", "NY": "NYK", "PHO": "PHX", "SA": "SAS"}
+
+
 def team_lookup() -> dict[str, int]:
     from nba_api.stats.static import teams
 
@@ -175,6 +178,9 @@ def team_lookup() -> dict[str, int]:
             out[_norm(name)] = t["id"]
         out.setdefault(_norm(t["city"]), t["id"])  # 'los angeles' is ambiguous; nickname wins
     out[_norm("LA Clippers")] = out[_norm("Los Angeles Clippers")]
+    # SBR's short codes that differ from the NBA's
+    for sbr_code, nba_code in SBR_ABBREV_ALIASES.items():
+        out[_norm(sbr_code)] = out[_norm(nba_code)]
     out.pop("los angeles", None)
     return out
 
@@ -187,7 +193,8 @@ def load_odds_history(con, lake: RawLake) -> dict[str, int]:
         UNION ALL
         SELECT game_id, game_date, home_team_id, tip_utc FROM games
         WHERE game_id NOT IN (SELECT game_id FROM schedule)""").df()
-    key = {(r.game_date, r.home_team_id): (r.game_id, r.tip_utc) for r in sched.itertuples()}
+    # .df() yields pandas Timestamps; normalise to date so lookups by datetime.date hit
+    key = {(pd.Timestamp(r.game_date).date(), r.home_team_id): (r.game_id, r.tip_utc) for r in sched.itertuples()}
     rows, unmatched = [], 0
     for source, line_types in (("sbr_history", ("open", "close")), ("sbr_snapshots", ("snapshot",))):
         for rec in lake.iter(source):
