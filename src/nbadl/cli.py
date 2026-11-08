@@ -1,7 +1,7 @@
 """Command line entry point.
 
   nbadl pull-games  --first 2013 --last 2025      games + schedule per season
-  nbadl pull-games-detail --season 2023-24        play-by-play + summary (officials) per game
+  nbadl pull-games-detail --season 2023-24        play-by-play V3 + summary V3 (officials, roster) per game
   nbadl pull-odds   --start 2013-10-29 --end 2014-06-15   SBR history, one page per date
   nbadl snapshot-odds                              today's SBR lines, timestamped (run on a schedule)
   nbadl build                                      lake -> warehouse, prints data-quality stats
@@ -55,11 +55,18 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "pull-games-detail":
         nba = NbaStatsIngest(lake)
         ids = _game_ids(lake, args.season)[: args.limit]
+        failed: list[str] = []
         for i, gid in enumerate(ids, 1):
-            nba.pbp(gid)
-            nba.summary(gid)
+            for fetch in (nba.pbp, nba.summary):
+                try:
+                    fetch(gid)
+                except Exception as e:  # one bad game must not stop a season; rerun retries it
+                    logging.error("%s %s failed: %s", fetch.__name__, gid, e)
+                    failed.append(gid)
             if i % 50 == 0:
                 logging.info("%s: %d/%d games", args.season, i, len(ids))
+        logging.info("%s done: %d games, %d failed fetches %s", args.season, len(ids), len(failed),
+                     sorted(set(failed))[:20])
 
     elif args.cmd == "pull-odds":
         sbr = SbrIngest(lake)

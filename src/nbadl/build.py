@@ -16,7 +16,7 @@ from . import warehouse as wh
 from .ingest.nba_stats import result_set
 from .ingest.sbr import parse_odds_tables
 from .lake import RawLake
-from .pbp_v2 import events_from_v2, team_ids
+from .pbp_v3 import events_from_v3, roster_from_summary_v3, team_ids, unresolved_subs
 from .possessions import parse_game
 
 log = logging.getLogger(__name__)
@@ -99,13 +99,13 @@ def load_games(con, lake: RawLake) -> int:
 def load_officials(con, lake: RawLake) -> int:
     dates = dict(con.execute("SELECT game_id, game_date FROM games").fetchall())
     rows = []
-    for rec in lake.iter("summary"):
+    for rec in lake.iter("summary_v3"):
         gd = dates.get(rec.key)
         if gd is None:
             continue
-        for o in result_set(rec.payload, "Officials"):
-            rows.append({"game_id": rec.key, "official_id": o["OFFICIAL_ID"],
-                         "name": f'{o["FIRST_NAME"]} {o["LAST_NAME"]}',
+        for o in (rec.payload.get("boxScoreSummary") or {}).get("officials") or []:
+            rows.append({"game_id": rec.key, "official_id": o["personId"],
+                         "name": o.get("name") or f'{o.get("firstName", "")} {o.get("familyName", "")}'.strip(),
                          "available_at": wh.officials_available_at(gd)})
     return _replace(con, "officials", pd.DataFrame(rows))
 
@@ -114,18 +114,25 @@ def load_officials(con, lake: RawLake) -> int:
 def load_pbp(con, lake: RawLake) -> dict[str, int]:
     games = {r[0]: (r[1], r[2]) for r in con.execute("SELECT game_id, available_at, game_date FROM games").fetchall()}
     poss_rows, stint_rows = [], []
-    stats = {"games": 0, "incomplete_lineups": 0, "score_mismatch": 0}
-    for rec in lake.iter("pbp_v2"):
+    stats = {"games": 0, "incomplete_lineups": 0, "unresolved_subs": 0, "games_without_roster": 0,
+             "score_mismatch": 0}
+    for rec in lake.iter("pbp_v3"):
         if rec.key not in games:
             continue
         avail = games[rec.key][0]
-        events = events_from_v2(rec.payload)
+        roster = None
+        if lake.exists("summary_v3", rec.key):
+            roster = roster_from_summary_v3(lake.read("summary_v3", rec.key).payload)
+        else:
+            stats["games_without_roster"] += 1
+        events = events_from_v3(rec.payload, roster)
         if not events:
             continue
         teams = team_ids(events)
         parsed = parse_game(events, teams)
         stats["games"] += 1
         stats["incomplete_lineups"] += int(not parsed.lineup_complete)
+        stats["unresolved_subs"] += unresolved_subs(events)
         for p in parsed.possessions:
             poss_rows.append({
                 "game_id": p.game_id, "period": p.period, "idx": p.index, "offense_team_id": p.offense_team_id,

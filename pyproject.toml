@@ -10,6 +10,7 @@ dependencies = [
   "requests>=2.31",
   "nba_api>=1.10",
   "beautifulsoup4>=4.12",
+  "pytz",
 ]
 
 [project.optional-dependencies]

@@ -1,11 +1,15 @@
+import gzip
 import json
+from pathlib import Path
 
 import pytest
 
 from nbadl.ingest.sbr import SbrShapeError, extract_odds_tables, parse_odds_tables
 from nbadl.lake import RawLake
-from nbadl.pbp_v2 import events_from_v2, team_ids
-from nbadl.possessions import Kind
+from nbadl.pbp_v3 import events_from_v3, roster_from_summary_v3, team_ids, unresolved_subs
+from nbadl.possessions import Kind, count_possessions, parse_game
+
+FIX = Path(__file__).parent / "fixtures"
 
 
 def sbr_html(tables):
@@ -43,25 +47,50 @@ def test_lake_is_append_only(tmp_path):
         lake.write("x", "k", {"a": 2})
 
 
-def v2(rows):
-    headers = ["GAME_ID", "EVENTNUM", "EVENTMSGTYPE", "EVENTMSGACTIONTYPE", "PERIOD", "PCTIMESTRING",
-               "HOMEDESCRIPTION", "NEUTRALDESCRIPTION", "VISITORDESCRIPTION", "PERSON1TYPE",
-               "PLAYER1_ID", "PLAYER1_TEAM_ID", "PLAYER2_ID"]
-    return {"resultSets": [{"name": "PlayByPlay", "headers": headers, "rowSet": rows}]}
+def _trimmed():
+    return json.loads((FIX / "game_0021300001_v3_trimmed.json").read_text())
 
 
-def test_v2_adapter():
-    rows = [
-        ["g", 1, 1, 1, 1, "11:40", "Tatum 26' 3PT Jump Shot (3 PTS)", None, None, 4, 7, 100, 0],
-        ["g", 2, 3, 11, 1, "11:20", None, None, "MISS James Free Throw 1 of 2", 5, 9, 200, 0],
-        ["g", 3, 4, 0, 1, "11:20", None, None, "Lakers Rebound", 3, 200, None, 0],
-        ["g", 4, 3, 16, 1, "11:10", "Brown Free Throw Technical (1 PTS)", None, None, 4, 8, 100, 0],
-        ["g", 5, 8, 0, 1, "11:00", "SUB: White FOR Brown", None, None, 4, 8, 100, 10],
-    ]
-    evs = events_from_v2(v2(rows))
-    assert [e.kind for e in evs] == [Kind.FG_MADE, Kind.FT_MISSED, Kind.REBOUND, Kind.FT_MADE, Kind.SUB]
-    assert evs[0].points == 3 and evs[0].clock_s == 700
-    assert evs[2].team_id == 200 and evs[2].player_id is None  # team rebound
-    assert evs[3].ft_type == "technical"
-    assert (evs[4].player_id, evs[4].player_in_id) == (8, 10)
-    assert team_ids(evs) == (100, 200)
+IND, ORL = 1610612754, 1610612753
+
+
+def test_v3_adapter_on_real_sample():
+    """Trimmed real PlayByPlayV3 + BoxScoreSummaryV3 payloads, ORL @ IND 2013-10-29."""
+    f = _trimmed()
+    evs = {e.seq: e for e in events_from_v3(f["pbp_v3"], roster_from_summary_v3(f["summary_v3"]))}
+    assert evs[1].kind == Kind.PERIOD_START and evs[1].clock_s == 720
+    assert evs[14].kind == Kind.FG_MADE and evs[14].points == 3 and evs[14].team_id == IND
+    assert evs[10].kind == Kind.OTHER and evs[10].team_id == ORL  # block: shares actionNumber, own actionId
+    assert (evs[16].kind, evs[16].team_id, evs[16].player_id) == (Kind.REBOUND, ORL, None)  # team rebound
+    assert (evs[24].kind, evs[24].team_id, evs[24].player_id) == (Kind.REBOUND, IND, None)
+    assert (evs[236].kind, evs[236].team_id, evs[236].player_id) == (Kind.TURNOVER, IND, None)  # shot clock
+    assert evs[23].kind == Kind.FT_MISSED and evs[23].ft_type == "regular"
+    assert evs[289].kind == Kind.FT_MISSED and evs[289].ft_type == "technical"
+    assert evs[365].kind == Kind.FT_MADE and evs[365].ft_type == "technical" and evs[365].points == 1
+    # sub-in names: accent-stripped ("Vucevic" -> Vučević), initial-qualified ("G. Hill" vs
+    # S. Hill), and a player (Butler) who appears nowhere else in the play-by-play
+    assert (evs[182].player_id, evs[182].player_in_id) == (203094, 202696)
+    assert (evs[184].player_id, evs[184].player_in_id) == (203524, 201588)
+    assert (evs[453].player_id, evs[453].player_in_id) == (201579, 201588)
+    assert (evs[493].player_id, evs[493].player_in_id) == (202331, 2446)
+
+
+def test_v3_sub_without_roster_is_counted_unresolved():
+    f = _trimmed()
+    evs = events_from_v3(f["pbp_v3"])  # no summary roster: Butler cannot be named
+    assert unresolved_subs(evs) >= 1
+
+
+def test_v3_full_game_matches_official_score():
+    payload = json.loads(gzip.open(FIX / "pbp_v3_0021300001_full.json.gz", "rt").read())
+    roster = roster_from_summary_v3(_trimmed()["summary_v3"])
+    evs = events_from_v3(payload, roster)
+    assert unresolved_subs(evs) == 0
+    teams = team_ids(evs)
+    assert teams == (ORL, IND)
+    g = parse_game(evs, teams)
+    assert g.points_by_team == {IND: 97, ORL: 87}
+    assert g.lineup_complete
+    poss = count_possessions(g)
+    assert all(88 <= n <= 100 for n in poss.values()), poss
+    assert sum(s.seconds for s in g.stints) == 48 * 60
