@@ -58,25 +58,54 @@ def roster_from_summary_v3(payload: dict) -> dict[int, list[dict]]:
     return out
 
 
+def _collapse(key: str) -> str:
+    """Make 'poeltl' and 'poltl' (two transliterations of Pöltl) the same key."""
+    return re.sub(r"(oe|ue|ae)", lambda m: m[1][0], key)
+
+
 class _Names:
-    """Per-team name -> player id index. Ambiguous names map to None."""
+    """Per-team name -> player id index. Ambiguous names map to None.
+
+    Strong names (nameI, family name, full name, first-name prefixes) are exact. Weak names (first name
+    alone, for sources that print 'Hansen' for Hansen Yang) never override a strong one.
+    """
 
     def __init__(self) -> None:
         self._idx: dict[int, dict[str, int | None]] = {}
+        self._weak: dict[int, dict[str, int | None]] = {}
 
-    def add(self, team: int, pid: int, *names: str | None) -> None:
-        idx = self._idx.setdefault(team, {})
+    @staticmethod
+    def _keys(name: str) -> set[str]:
+        k = _norm(name)
+        return {k, _collapse(k)}
+
+    def _put(self, idx: dict[int, dict[str, int | None]], team: int, pid: int, names) -> None:
+        d = idx.setdefault(team, {})
         for n in names:
             if not n:
                 continue
-            k = _norm(n)
-            if k in idx and idx[k] != pid:
-                idx[k] = None  # two teammates share it
-            else:
-                idx[k] = pid
+            for k in self._keys(n):
+                d[k] = None if (k in d and d[k] != pid) else pid  # two teammates share it
+
+    def add(self, team: int, pid: int, *names: str | None) -> None:
+        self._put(self._idx, team, pid, names)
+
+    def add_weak(self, team: int, pid: int, *names: str | None) -> None:
+        self._put(self._weak, team, pid, names)
+
+    def add_roster_player(self, team: int, p: dict) -> None:
+        pid = int(p["personId"])
+        self.add(team, pid, p.get("nameI"), p.get("familyName"), p.get("name"))
+        first, family = p.get("firstName") or "", p.get("familyName") or ""
+        for k in range(1, len(first)):  # 'Jay. Williams' separates Jaylin from Jalen
+            self.add(team, pid, f"{first[:k]}. {family}")
+        self.add_weak(team, pid, first)
 
     def resolve(self, team: int, name: str) -> int | None:
-        return self._idx.get(team, {}).get(_norm(name))
+        for k in (_norm(name), _collapse(_norm(name))):
+            if k in self._idx.get(team, {}):
+                return self._idx[team][k]
+        return self._weak.get(team, {}).get(_norm(name))
 
 
 def _names(acts: list[dict], roster: dict[int, list[dict]] | None) -> _Names:
@@ -84,7 +113,7 @@ def _names(acts: list[dict], roster: dict[int, list[dict]] | None) -> _Names:
     for team, players in (roster or {}).items():
         for p in players:
             if p.get("personId"):
-                names.add(team, int(p["personId"]), p.get("nameI"), p.get("familyName"), p.get("name"))
+                names.add_roster_player(team, p)
     for a in acts:
         if a.get("teamId") and a.get("personId") and a.get("actionType") != "Substitution":
             names.add(int(a["teamId"]), int(a["personId"]), a.get("playerNameI"), a.get("playerName"))

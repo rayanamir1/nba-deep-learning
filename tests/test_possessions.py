@@ -102,3 +102,30 @@ def test_starters_override_fixes_lineup():
     parse = parse_game(g.evs, (A, B), starters_override={1: {A: set(A_START), B: set(B_START)}})
     assert parse.lineup_complete
     assert parse.stints[0].lineup[B] == tuple(B_START)
+
+
+def test_later_periods_start_from_previous_period_end_lineup():
+    # period 1 is fully known (override). In period 2 players 3 and 13 never record an event, so
+    # inference sees only 4 per team -- but the lineup cannot change between periods without a sub.
+    g = G()
+    g.add(1, 700, Kind.FG_MADE, A, 1, points=2)
+    g.add(1, 680, Kind.FG_MADE, B, 11, points=2)
+    g.add(2, 700, Kind.FG_MADE, A, 1, points=2)
+    for p in (2, 4, 5):
+        g.add(2, 690, Kind.FOUL, A, p)
+    for p in (11, 12, 14, 15):
+        g.add(2, 690, Kind.FOUL, B, p)
+    parse = parse_game(g.evs, (A, B), starters_override={1: {A: set(A_START), B: set(B_START)}})
+    assert parse.lineup_complete
+    p2 = [s for s in parse.stints if s.period == 2][0]
+    assert p2.lineup[A] == tuple(A_START) and p2.lineup[B] == tuple(B_START)
+
+
+def test_period_start_sub_applies_on_top_of_carried_lineup():
+    g = G()
+    g.add(1, 700, Kind.FG_MADE, A, 1, points=2)
+    g.add(2, 720, Kind.SUB, A, 5, player_in_id=6)   # swap at the break, logged in period 2
+    g.add(2, 700, Kind.FG_MADE, A, 6, points=2)
+    parse = parse_game(g.evs, (A, B), starters_override={1: {A: set(A_START), B: set(B_START)}})
+    p2 = [s for s in parse.stints if s.period == 2][-1]
+    assert p2.lineup[A] == (1, 2, 3, 4, 6)

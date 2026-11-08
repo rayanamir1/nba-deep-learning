@@ -190,3 +190,35 @@ def test_odds_match_falls_back_to_one_day_off_but_not_when_ambiguous():
     assert match_game(by_day, by_pair, date(2021, 3, 2), 1, None) == (None, None) # unknown team
     by_pair[(1, 2)].append((date(2021, 3, 1), ("G0", "tipB")))                   # two candidates: refuse
     assert match_game(by_day, by_pair, date(2021, 3, 2), 1, 2) == (None, None)
+
+
+def _sub(desc, aid, out_pid, team=1):
+    return {"actionId": aid, "actionNumber": aid, "period": 1, "clock": "PT10M00.00S", "actionType": "Substitution",
+            "subType": "", "description": desc, "teamId": team, "personId": out_pid,
+            "scoreHome": "0", "scoreAway": "0"}
+
+
+def _player(pid, first, family):
+    return {"personId": pid, "firstName": first, "familyName": family, "nameI": f"{first[0]}. {family}",
+            "name": f"{first} {family}"}
+
+
+def test_sub_names_resolve_across_source_spellings():
+    roster = {1: [_player(1, "Jalen", "Williams"), _player(2, "Jaylin", "Williams"), _player(3, "Jakob", "Poeltl"),
+                  _player(4, "Yang", "Hansen"), _player(5, "Hansen", "Yang"), _player(6, "Stephen", "Curry"),
+                  _player(7, "Seth", "Curry"), _player(8, "Zed", "Other"), _player(9, "Out", "Guy")]}
+    payload = {"game": {"gameId": "x", "actions": [
+        _sub("SUB: Jay. Williams FOR Guy", 1, 9),   # prefix of first name disambiguates teammates
+        _sub("SUB: Jal. Williams FOR Guy", 2, 9),
+        _sub("SUB: J. Williams FOR Guy", 3, 9),     # genuinely ambiguous -> unresolved
+        _sub("SUB: Pöltl FOR Guy", 4, 9),           # ö vs oe
+        _sub("SUB: St. Curry FOR Guy", 5, 9),
+        _sub("SUB: Se. Curry FOR Guy", 6, 9)]}}
+    got = [e.player_in_id for e in events_from_v3(payload, roster)]
+    assert got == [2, 1, None, 3, 6, 7]
+
+
+def test_sub_by_first_name_only_is_a_weak_fallback():
+    roster = {1: [_player(5, "Hansen", "Yang"), _player(9, "Out", "Guy")]}
+    payload = {"game": {"gameId": "x", "actions": [_sub("SUB: Hansen FOR Guy", 1, 9)]}}
+    assert [e.player_in_id for e in events_from_v3(payload, roster)] == [5]

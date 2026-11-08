@@ -170,11 +170,19 @@ def parse_game(
     points = {t: 0 for t in team_ids}
     outside = {t: 0 for t in team_ids}
     lineup_complete = True
+    prev_end: dict[int, set[int]] | None = None  # who was on court when the previous period ended
 
     for period in sorted(by_period):
         pev = by_period[period]
         plen = period_length_s(period)
-        starters = (starters_override or {}).get(period) or infer_period_starters(pev, team_ids)
+        starters = (starters_override or {}).get(period)
+        if not starters:
+            # A lineup can only change through a logged sub, and period-break subs are logged inside the
+            # new period, so the previous period's end lineup is exact whenever it is complete.
+            if prev_end is not None and all(len(prev_end[t]) == 5 for t in team_ids):
+                starters = prev_end
+            else:
+                starters = infer_period_starters(pev, team_ids)
         on_court = {t: set(starters.get(t, set())) for t in team_ids}
         if any(len(v) != 5 for v in on_court.values()):
             lineup_complete = False
@@ -240,6 +248,7 @@ def parse_game(
         close_possession(0.0)
         stint.end_clock_s = 0.0
         stints.append(stint)
+        prev_end = {t: set(on_court[t]) for t in team_ids}
 
     return GameParse(possessions, stints, points, outside, lineup_complete)
 
