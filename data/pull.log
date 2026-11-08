@@ -28,3 +28,17 @@ Traceback (most recent call last):
 requests.exceptions.HTTPError: 502 Server Error: Bad Gateway for url: https://www.sportsbookreview.com/betting-odds/nba-basketball/totals/full-game/?date=2019-10-05
 2026-11-08 03:44:25,308 INFO 2025-26: 50/1315 games
 2026-11-08 03:46:25,732 INFO 2025-26: 100/1315 games
+2026-11-08 03:48:26,158 INFO 2025-26: 150/1315 games
+2026-11-08 03:50:26,543 INFO 2025-26: 200/1315 games
+2026-11-08 03:52:26,925 INFO 2025-26: 250/1315 games
+2026-11-08 03:52:48,594 WARNING summary_v3/0022500259 failed ('NoneType' object has no attribute 'get'), retry 1 in 5s
+2026-11-08 03:52:53,747 WARNING summary_v3/0022500259 failed ('NoneType' object has no attribute 'get'), retry 2 in 10s
+2026-11-08 03:53:03,807 WARNING summary_v3/0022500259 failed ('NoneType' object has no attribute 'get'), retry 3 in 20s
+2026-11-08 03:53:23,880 ERROR summary 0022500259 failed: 'NoneType' object has no attribute 'get'
+2026-11-08 03:53:26,362 WARNING summary_v3/0022500260 failed ('NoneType' object has no attribute 'get'), retry 1 in 5s
+2026-11-08 03:53:31,510 WARNING summary_v3/0022500260 failed ('NoneType' object has no attribute 'get'), retry 2 in 10s
+2026-11-08 03:53:41,608 WARNING summary_v3/0022500260 failed ('NoneType' object has no attribute 'get'), retry 3 in 20s
+2026-11-08 03:54:01,690 ERROR summary 0022500260 failed: 'NoneType' object has no attribute 'get'
+2026-11-08 03:54:04,310 WARNING summary_v3/0022500261 failed ('NoneType' object has no attribute 'get'), retry 1 in 5s
+2026-11-08 03:54:09,459 WARNING summary_v3/0022500261 failed ('NoneType' object has no attribute 'get'), retry 2 in 10s
+2026-11-08 03:54:19,520 WARNING summary_v3/0022500261 failed ('NoneType' object has no attribute 'get'), retry 3 in 20s
