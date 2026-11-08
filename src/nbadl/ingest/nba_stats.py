@@ -23,7 +23,7 @@ from ..lake import RawLake
 
 log = logging.getLogger(__name__)
 
-SEASON_TYPES = {"regular": "Regular Season", "playoffs": "Playoffs"}
+SEASON_TYPES = {"regular": "Regular Season", "playoffs": "Playoffs", "playin": "PlayIn"}  # play-in exists from 2020-21
 
 
 class Throttle:

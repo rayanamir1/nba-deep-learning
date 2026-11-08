@@ -185,23 +185,37 @@ def team_lookup() -> dict[str, int]:
     return out
 
 
+def match_game(by_day: dict, by_pair: dict, gd: date, home: int | None, away: int | None):
+    """(game_id, tip) for an SBR line. Exact (date, home) first; else the single game between the same two
+    teams within one day (SBR keeps a postponed game's original date)."""
+    hit = by_day.get((gd, home))
+    if hit is not None or home is None or away is None:
+        return hit if hit is not None else (None, None)
+    near = [v for d, v in by_pair.get((home, away), []) if abs((d - gd).days) <= 1]
+    return near[0] if len(near) == 1 else (None, None)
+
+
 def load_odds_history(con, lake: RawLake) -> dict[str, int]:
     lookup = team_lookup()
     # schedule covers games not played yet (live snapshots); games covers seasons without a schedule pull
     sched = con.execute("""
-        SELECT game_id, game_date, home_team_id, tip_utc FROM schedule
+        SELECT game_id, game_date, home_team_id, away_team_id, tip_utc FROM schedule
         UNION ALL
-        SELECT game_id, game_date, home_team_id, tip_utc FROM games
+        SELECT game_id, game_date, home_team_id, away_team_id, tip_utc FROM games
         WHERE game_id NOT IN (SELECT game_id FROM schedule)""").df()
     # .df() yields pandas Timestamps; normalise to date so lookups by datetime.date hit
-    key = {(pd.Timestamp(r.game_date).date(), r.home_team_id): (r.game_id, r.tip_utc) for r in sched.itertuples()}
+    key, by_pair = {}, {}
+    for r in sched.itertuples():
+        d = pd.Timestamp(r.game_date).date()
+        key[(d, r.home_team_id)] = (r.game_id, r.tip_utc)
+        by_pair.setdefault((r.home_team_id, r.away_team_id), []).append((d, (r.game_id, r.tip_utc)))
     rows, unmatched = [], 0
     for source, line_types in (("sbr_history", ("open", "close")), ("sbr_snapshots", ("snapshot",))):
         for rec in lake.iter(source):
             gd = date.fromisoformat(rec.key[:10])
             for ln in parse_odds_tables(rec.payload):
-                home = lookup.get(_norm(ln.home_team))
-                gid, tip = key.get((gd, home), (None, None))
+                home, away = lookup.get(_norm(ln.home_team)), lookup.get(_norm(ln.away_team))
+                gid, tip = match_game(key, by_pair, gd, home, away)
                 if gid is None:
                     unmatched += 1
                 for lt in line_types:

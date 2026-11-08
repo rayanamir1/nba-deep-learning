@@ -18,14 +18,14 @@ from datetime import date, datetime, timedelta
 from . import config
 from . import warehouse as wh
 from .build import build_all
-from .ingest.nba_stats import NbaStatsIngest, result_set
+from .ingest.nba_stats import SEASON_TYPES, NbaStatsIngest, result_set
 from .ingest.sbr import SbrIngest
 from .lake import RawLake
 
 
 def _game_ids(lake: RawLake, season: str) -> list[str]:
     ids: set[str] = set()
-    for st in ("regular", "playoffs"):
+    for st in SEASON_TYPES:
         key = f"{season}_{st}"
         if lake.exists("games", key):
             ids |= {r["GAME_ID"] for r in result_set(lake.read("games", key).payload, "LeagueGameFinderResults")}
@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "pull-games":
         nba = NbaStatsIngest(lake)
         for season in config.seasons(args.last, args.first):
-            for st in ("regular", "playoffs"):
+            for st in SEASON_TYPES:
                 nba.games(season, st)
             nba.schedule(season)
             logging.info("season %s done", season)

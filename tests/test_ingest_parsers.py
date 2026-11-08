@@ -174,3 +174,19 @@ def test_free_throw_by_a_player_whose_name_starts_with_miss_is_made():
         _ft("MISS Fears Free Throw 1 of 2", 3)]}}
     kinds = [(e.kind, e.points) for e in events_from_v3(payload)]
     assert kinds == [(Kind.FT_MADE, 1), (Kind.FT_MISSED, 0), (Kind.FT_MISSED, 0)]
+
+
+def test_odds_match_falls_back_to_one_day_off_but_not_when_ambiguous():
+    from datetime import date
+
+    from nbadl.build import match_game
+
+    g = date(2021, 3, 3)
+    by_day = {(g, 1): ("G1", "tipA")}
+    by_pair = {(1, 2): [(g, ("G1", "tipA"))]}
+    assert match_game(by_day, by_pair, g, 1, 2) == ("G1", "tipA")                 # exact
+    assert match_game(by_day, by_pair, date(2021, 3, 2), 1, 2) == ("G1", "tipA")  # SBR one day early
+    assert match_game(by_day, by_pair, date(2021, 3, 6), 1, 2) == (None, None)    # too far
+    assert match_game(by_day, by_pair, date(2021, 3, 2), 1, None) == (None, None) # unknown team
+    by_pair[(1, 2)].append((date(2021, 3, 1), ("G0", "tipB")))                   # two candidates: refuse
+    assert match_game(by_day, by_pair, date(2021, 3, 2), 1, 2) == (None, None)
