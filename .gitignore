@@ -6,3 +6,5 @@ data/raw/
 data/warehouse/
 *.duckdb
 *.egg-info/
+data/*.log
+data/*.parquet
