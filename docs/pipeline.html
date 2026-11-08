@@ -1,0 +1,458 @@
+<title>NBA Totals Pipeline</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a systems spec. The overview schematic on top, then one spec card per stage with typed inputs and outputs. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #16202b;
+  --muted: #5a6675;
+  --line: #d6dbe2;
+  --accent: #d9601a;          /* ball orange */
+  --src: #2f6fb0;             /* data sources */
+  --store: #4b5a6b;           /* storage */
+  --feat: #1f8a78;            /* feature layers */
+  --proj: #d9601a;            /* projection */
+  --prob: #7a4fb5;            /* probability */
+  --dec: #b0315a;             /* decision */
+  --warn-bg: #fff4e5;
+  --warn-fg: #8a4b00;
+  --code-bg: #eef1f5;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Atkinson Hyperlegible", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #171e27; --fg: #e6ebf1; --muted: #9aa6b4; --line: #2b3542;
+    --accent: #f08a4b; --src: #6fa8e6; --store: #9aa9ba; --feat: #4fc4ae; --proj: #f08a4b; --prob: #b493e6; --dec: #e56f95;
+    --warn-bg: #2d2214; --warn-fg: #f3c27e; --code-bg: #1f2833; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #171e27; --fg: #e6ebf1; --muted: #9aa6b4; --line: #2b3542;
+  --accent: #f08a4b; --src: #6fa8e6; --store: #9aa9ba; --feat: #4fc4ae; --proj: #f08a4b; --prob: #b493e6; --dec: #e56f95;
+  --warn-bg: #2d2214; --warn-fg: #f3c27e; --code-bg: #1f2833; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15.5px; line-height: 1.55; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 32px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 36px; }
+h1, h2, h3 { font-family: var(--display); letter-spacing: .01em; text-wrap: balance; margin: 0; line-height: 1.1; }
+h1 { font-size: clamp(34px, 5vw, 50px); font-weight: 700; }
+h2 { font-size: 28px; font-weight: 700; }
+h3 { font-size: 23px; font-weight: 600; }
+p { margin: 0; max-width: 72ch; }
+a { color: inherit; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+header { display: grid; gap: 12px; }
+.lede { font-size: 17px; color: var(--muted); }
+.invariant { border: 1.5px solid var(--accent); border-radius: 6px; padding: 14px 16px; background: var(--surface); display: grid; gap: 6px; max-width: 860px; }
+.invariant code { font-family: var(--mono); font-size: 13.5px; }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+
+/* overview */
+.schematic { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+.svg-scroll { overflow-x: auto; }
+.svg-scroll svg { display: block; min-width: 1060px; width: 100%; height: auto; }
+svg text { font-family: var(--body); fill: var(--fg); }
+svg .gtitle { font-family: var(--display); font-weight: 700; font-size: 17px; letter-spacing: .03em; }
+svg .item { font-size: 12.5px; }
+svg .num { font-family: var(--mono); font-size: 11px; font-weight: 600; fill: var(--muted); }
+svg .small { font-size: 11.5px; fill: var(--muted); }
+svg a:hover .item, svg a:focus .item { text-decoration: underline; }
+svg a:focus { outline: none; }
+svg a:focus-visible rect.hit { stroke: var(--accent); stroke-width: 2; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
+
+/* stage cards */
+.stages { display: grid; gap: 18px; }
+.stage { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 20px 22px; display: grid; gap: 14px; scroll-margin-top: 16px; }
+.stage-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+.stage-no { font-family: var(--mono); font-weight: 600; font-size: 13px; color: var(--c); border: 1.5px solid var(--c); border-radius: 4px; padding: 1px 7px; }
+.kind { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-left: auto; }
+.spec { display: grid; grid-template-columns: 128px 1fr; gap: 10px 18px; }
+.spec > dt { font-family: var(--mono); font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding-top: 2px; }
+.spec > dd { margin: 0; min-width: 0; display: grid; gap: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px; background: var(--bg); text-decoration: none; }
+a.chip:hover { border-color: var(--accent); }
+.chip.src { color: var(--src); } .chip.store { color: var(--store); } .chip.feat { color: var(--feat); }
+.chip.proj { color: var(--proj); } .chip.prob { color: var(--prob); } .chip.dec { color: var(--dec); }
+.formula { font-family: var(--mono); font-size: 13.5px; background: var(--code-bg); border-radius: 6px; padding: 10px 14px; overflow-x: auto; white-space: pre; line-height: 1.6; }
+.trap { background: var(--warn-bg); color: var(--warn-fg); border-radius: 6px; padding: 10px 14px; font-size: 14.5px; }
+.trap b { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; margin-right: 6px; }
+ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.table-scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 640px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--mono); font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.tbd { color: var(--warn-fg); background: var(--warn-bg); border-radius: 3px; padding: 0 5px; font-family: var(--mono); font-size: 12px; }
+
+.questions { background: var(--surface); border: 1.5px dashed var(--accent); border-radius: 8px; padding: 20px 22px; display: grid; gap: 12px; }
+.questions ol { margin: 0; padding-left: 22px; display: grid; gap: 10px; }
+.note { display: grid; gap: 8px; }
+footer { font-size: 13px; color: var(--muted); }
+
+@media (max-width: 640px) {
+  .spec { grid-template-columns: 1fr; gap: 4px; }
+  .spec > dd { margin-bottom: 8px; }
+  .kind { margin-left: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">nba-deep-learning · design spec v0.1 · game totals</div>
+  <h1>How the totals model works, stage by stage</h1>
+  <p class="lede">Thirteen stages turn raw NBA data into one number per game: a calibrated probability that the final score goes over the line. Each stage below lists where its inputs come from, the algorithm, why the math holds up, and where its output goes. Click any box in the schematic to jump to its stage.</p>
+  <div class="invariant">
+    <div class="eyebrow" style="color:var(--accent)">The one invariant the whole system obeys</div>
+    <p>Every feature used for a game decided at time <code>t</code> comes only from rows where <code>available_at &lt; t</code>. Most public models break this rule without noticing, which is why their backtests look great and their live results fall apart.</p>
+  </div>
+</header>
+
+<section class="schematic" aria-label="Pipeline overview">
+  <div class="svg-scroll">
+  <svg viewBox="0 0 1160 400" role="img" aria-labelledby="schem-title">
+    <title id="schem-title">Pipeline overview: sources feed a point-in-time store, which feeds feature layers, game projection, probability, and the bet decision; walk-forward evaluation feeds back into feature selection.</title>
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/>
+      </marker>
+    </defs>
+
+    <!-- clock bar -->
+    <rect x="200" y="12" width="950" height="34" rx="5" style="fill:none;stroke:var(--accent);stroke-width:1.5;stroke-dasharray:5 4"/>
+    <text x="216" y="34" class="item" style="font-weight:700;fill:var(--accent)">Point-in-time clock</text>
+    <text x="356" y="34" class="small">Every stage from 2 to 13 reads data as of the decision time t. Nothing with available_at ≥ t gets through.</text>
+
+    <!-- group boxes -->
+    <g>
+      <rect x="10" y="66" width="170" height="236" rx="6" style="fill:var(--bg);stroke:var(--src);stroke-width:1.5"/>
+      <text x="22" y="90" class="gtitle" style="fill:var(--src)">SOURCES</text>
+      <a href="#stage-1"><rect class="hit" x="16" y="98" width="158" height="196" style="fill:transparent"/>
+        <text x="22" y="118" class="item">nba_api box &amp; schedule</text>
+        <text x="22" y="143" class="item">Play-by-play</text>
+        <text x="22" y="168" class="item">Tracking &amp; shot data</text>
+        <text x="22" y="193" class="item">Referee crew per game</text>
+        <text x="22" y="218" class="item">Injury reports</text>
+        <text x="22" y="243" class="item">Odds: open &amp; close</text>
+        <text x="22" y="268" class="item">Arenas, altitude, tz</text>
+        <text x="22" y="288" class="num">STAGE 1</text>
+      </a>
+    </g>
+
+    <g>
+      <rect x="210" y="66" width="160" height="236" rx="6" style="fill:var(--bg);stroke:var(--store);stroke-width:1.5"/>
+      <text x="222" y="90" class="gtitle" style="fill:var(--store)">STORE</text>
+      <a href="#stage-2"><rect class="hit" x="216" y="98" width="148" height="196" style="fill:transparent"/>
+        <text x="222" y="118" class="item">Raw lake (Parquet,</text>
+        <text x="222" y="134" class="item">never edited)</text>
+        <text x="222" y="162" class="item">Point-in-time</text>
+        <text x="222" y="178" class="item">warehouse (DuckDB)</text>
+        <text x="222" y="206" class="item">available_at on</text>
+        <text x="222" y="222" class="item">every row</text>
+        <text x="222" y="288" class="num">STAGE 2</text>
+      </a>
+    </g>
+
+    <g>
+      <rect x="400" y="66" width="200" height="236" rx="6" style="fill:var(--bg);stroke:var(--feat);stroke-width:1.5"/>
+      <text x="412" y="90" class="gtitle" style="fill:var(--feat)">FEATURE LAYERS</text>
+      <a href="#stage-3"><rect class="hit" x="406" y="102" width="188" height="24" style="fill:transparent"/><text x="412" y="119" class="num">3</text><text x="430" y="119" class="item">Possessions &amp; stints</text></a>
+      <a href="#stage-4"><rect class="hit" x="406" y="134" width="188" height="24" style="fill:transparent"/><text x="412" y="151" class="num">4</text><text x="430" y="151" class="item">Shrunk player skills</text></a>
+      <a href="#stage-5"><rect class="hit" x="406" y="166" width="188" height="24" style="fill:transparent"/><text x="412" y="183" class="num">5</text><text x="430" y="183" class="item">RAPM: offense, defense, pace</text></a>
+      <a href="#stage-6"><rect class="hit" x="406" y="198" width="188" height="24" style="fill:transparent"/><text x="412" y="215" class="num">6</text><text x="430" y="215" class="item">Referee crew effects</text></a>
+      <a href="#stage-7"><rect class="hit" x="406" y="230" width="188" height="24" style="fill:transparent"/><text x="412" y="247" class="num">7</text><text x="430" y="247" class="item">Rest, travel, altitude</text></a>
+    </g>
+
+    <g>
+      <rect x="630" y="66" width="160" height="236" rx="6" style="fill:var(--bg);stroke:var(--proj);stroke-width:1.5"/>
+      <text x="642" y="90" class="gtitle" style="fill:var(--proj)">PROJECTION</text>
+      <a href="#stage-8"><rect class="hit" x="636" y="102" width="148" height="40" style="fill:transparent"/><text x="642" y="119" class="num">8</text><text x="660" y="119" class="item">Who plays, and</text><text x="660" y="135" class="item">how many minutes</text></a>
+      <a href="#stage-9"><rect class="hit" x="636" y="152" width="148" height="40" style="fill:transparent"/><text x="642" y="169" class="num">9</text><text x="660" y="169" class="item">Pace × points per</text><text x="660" y="185" class="item">possession</text></a>
+      <text x="642" y="232" class="small">output:</text>
+      <text x="642" y="250" class="item" style="font-weight:700">μ = mean total</text>
+    </g>
+
+    <g>
+      <rect x="820" y="66" width="150" height="236" rx="6" style="fill:var(--bg);stroke:var(--prob);stroke-width:1.5"/>
+      <text x="832" y="90" class="gtitle" style="fill:var(--prob)">PROBABILITY</text>
+      <a href="#stage-10"><rect class="hit" x="826" y="102" width="138" height="40" style="fill:transparent"/><text x="832" y="119" class="num">10</text><text x="854" y="119" class="item">Distribution</text><text x="854" y="135" class="item">of the total (σ)</text></a>
+      <a href="#stage-11"><rect class="hit" x="826" y="152" width="138" height="40" style="fill:transparent"/><text x="832" y="169" class="num">11</text><text x="854" y="169" class="item">Calibrate and</text><text x="854" y="185" class="item">blend with market</text></a>
+      <text x="832" y="232" class="small">output:</text>
+      <text x="832" y="250" class="item" style="font-weight:700">P(over line)</text>
+    </g>
+
+    <g>
+      <rect x="1000" y="66" width="150" height="236" rx="6" style="fill:var(--bg);stroke:var(--dec);stroke-width:1.5"/>
+      <text x="1012" y="90" class="gtitle" style="fill:var(--dec)">DECISION</text>
+      <a href="#stage-12"><rect class="hit" x="1006" y="102" width="138" height="88" style="fill:transparent"/>
+        <text x="1012" y="119" class="num">12</text><text x="1034" y="119" class="item">Edge vs price</text>
+        <text x="1034" y="143" class="item">¼ Kelly sizing</text>
+        <text x="1034" y="167" class="item">Log line taken</text>
+      </a>
+      <text x="1012" y="232" class="small">output:</text>
+      <text x="1012" y="250" class="item" style="font-weight:700">Bet / no bet</text>
+    </g>
+
+    <!-- forward arrows -->
+    <line x1="180" y1="184" x2="206" y2="184" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#arr)"/>
+    <line x1="370" y1="184" x2="396" y2="184" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#arr)"/>
+    <line x1="600" y1="184" x2="626" y2="184" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#arr)"/>
+    <line x1="790" y1="184" x2="816" y2="184" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#arr)"/>
+    <line x1="970" y1="184" x2="996" y2="184" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#arr)"/>
+    <!-- market line bypass: store -> probability/decision -->
+    <path d="M290,302 L290,326 L1075,326 L1075,306" style="fill:none;stroke:var(--src);stroke-width:1.2;stroke-dasharray:3 3" marker-end="url(#arr)"/>
+    <line x1="895" y1="326" x2="895" y2="306" style="stroke:var(--src);stroke-width:1.2;stroke-dasharray:3 3" marker-end="url(#arr)"/>
+    <text x="470" y="319" class="small" style="fill:var(--src)">the line itself (open, current, close) goes straight to stages 11 to 13, never into features 3 to 9</text>
+
+    <!-- evaluation bar -->
+    <a href="#stage-13">
+      <rect class="hit" x="400" y="340" width="750" height="46" rx="6" style="fill:var(--surface);stroke:var(--fg);stroke-width:1.5"/>
+      <text x="414" y="361" class="num">13</text>
+      <text x="438" y="361" class="item" style="font-weight:700">Walk-forward evaluation</text>
+      <text x="438" y="378" class="small">MAE vs closing total · Brier · calibration · CLV · ROI with confidence interval → keep or drop each feature, then retrain</text>
+    </a>
+    <line x1="1120" y1="302" x2="1120" y2="336" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#arr)"/>
+    <path d="M400,363 L385,363 L385,250 L396,250" style="fill:none;stroke:var(--muted);stroke-width:1.5;stroke-dasharray:5 4" marker-end="url(#arr)"/>
+  </svg>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--src)">raw data in</span>
+    <span style="--c:var(--store)">storage</span>
+    <span style="--c:var(--feat)">feature layers (per player, per game)</span>
+    <span style="--c:var(--proj)">projection</span>
+    <span style="--c:var(--prob)">probability</span>
+    <span style="--c:var(--dec)">decision</span>
+  </div>
+</section>
+
+<section class="stages">
+  <h2>The stages</h2>
+
+  <!-- 1 -->
+  <article class="stage" id="stage-1" style="--c:var(--src)">
+    <div class="stage-head"><span class="stage-no">01</span><h3>Data sources</h3><span class="kind">ingest · external</span></div>
+    <p>Seven sources. All of them are free except odds, and odds is the one hole we haven't filled yet (see the open questions at the bottom).</p>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Source</th><th>What we take</th><th>Coverage</th><th>How</th><th>Feeds</th></tr></thead>
+      <tbody>
+        <tr><td>stats.nba.com via <code>nba_api</code></td><td>Schedule, box scores (traditional and advanced), game results</td><td>1996-97 to now</td><td>Python client with throttling, about 1 request/sec</td><td>4, 7, 13</td></tr>
+        <tr><td>Play-by-play (<code>PlayByPlayV3</code>)</td><td>Every event: shots, fouls, subs, rebounds, timestamps</td><td>1996-97 to now</td><td>nba_api, one call per game</td><td>3</td></tr>
+        <tr><td>Player tracking and shot detail</td><td>Shot locations, defender distance, touches, speed</td><td>2013-14 to now</td><td>nba_api tracking and shot chart endpoints</td><td>4, 5</td></tr>
+        <tr><td>Referee assignments</td><td>The 3-person crew for each game</td><td>Historical: box score summary. Live: posted the morning of the game</td><td>nba_api, plus the official assignments page on game day</td><td>6</td></tr>
+        <tr><td>Injury reports</td><td>Out, doubtful, questionable or probable per player, with timestamp</td><td>Official report PDFs for recent seasons; gaps further back <span class="tbd">verify range</span></td><td>Scrape and parse the PDFs, storing each snapshot time</td><td>8</td></tr>
+        <tr><td>Odds</td><td>Opening, current and closing total plus price, per book</td><td><span class="tbd">open question 1</span></td><td>Depends on the source we pick</td><td>11, 12, 13</td></tr>
+        <tr><td>Static arena table</td><td>Latitude and longitude, altitude, time zone for 30 arenas</td><td>Built once by hand</td><td>CSV in the repo</td><td>7</td></tr>
+      </tbody>
+    </table></div>
+  </article>
+
+  <!-- 2 -->
+  <article class="stage" id="stage-2" style="--c:var(--store)">
+    <div class="stage-head"><span class="stage-no">02</span><h3>Raw lake and point-in-time warehouse</h3><span class="kind">storage · ETL</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip src" href="#stage-1">1 · all sources</a></div></dd>
+      <dt>Algorithm</dt><dd><p>Idempotent fetch jobs write raw API responses to an append-only Parquet lake and never edit them. Transform jobs build DuckDB tables from the lake. Every row carries two timestamps: <code>event_time</code> (when it happened) and <code>available_at</code> (when we could first have known it). Features are read with an as-of join on <code>available_at &lt; t_decision</code>.</p></dd>
+      <dt>Why</dt><dd><p>Keeping raw data means we can rebuild any table after fixing a bug. The as-of join is how we enforce the invariant in code instead of hoping for it. Example: a box score has <code>available_at</code> = the final buzzer. An injury report snapshot has <code>available_at</code> = its publish time. A closing line has <code>available_at</code> = tip-off, so it can never leak into a pre-game feature.</p></dd>
+      <dt>Test</dt><dd><p>A leakage unit test. Corrupt every row with <code>available_at ≥ t</code> (shuffle it, add noise), rebuild the features for time <code>t</code>, and assert they come out byte-identical.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip feat" href="#stage-3">3</a><a class="chip feat" href="#stage-4">4</a><a class="chip feat" href="#stage-6">6</a><a class="chip feat" href="#stage-7">7</a><a class="chip proj" href="#stage-8">8</a><a class="chip prob" href="#stage-11">11 · lines</a><a class="chip dec" href="#stage-12">12 · lines</a><a class="chip dec" href="#stage-13">13 · results</a></div></dd>
+    </dl>
+  </article>
+
+  <!-- 3 -->
+  <article class="stage" id="stage-3" style="--c:var(--feat)">
+    <div class="stage-head"><span class="stage-no">03</span><h3>Possession and stint parser</h3><span class="kind">feature · deterministic</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip store" href="#stage-2">2 · play-by-play table</a></div></dd>
+      <dt>Algorithm</dt><dd><p>A state machine walks each game's events in order. A possession ends on a made field goal (unless it's an and-one), the last free throw of a trip, a defensive rebound, a turnover, or the end of a period. In parallel it tracks the 10 players on court from period starters and substitutions. A new stint starts whenever that set of 10 changes.</p>
+        <div class="formula">possession(game, period, off_team, def_team, 5 off ids, 5 def ids,
+           start_s, end_s, points, ended_by)
+stint(game, 10 player ids, possessions_each_side, points_each_side, seconds)</div></dd>
+      <dt>Why</dt><dd><p>A total is literally possessions × points per possession, so we need possessions counted exactly. The box-score formula misses by 1.8 to 6.3 possessions per game. That is 2 to 6% of pace, which is bigger than the edge we're hunting. Stints are also the rows RAPM regresses on (stage 5).</p></dd>
+      <dt>Test</dt><dd><p>For every game, points summed over possessions must equal the final score, and seconds summed over stints must equal the game length.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip feat" href="#stage-4">4 · per-possession rates</a><a class="chip feat" href="#stage-5">5 · stint rows</a><a class="chip feat" href="#stage-6">6 · fouls and pace per game</a><a class="chip proj" href="#stage-9">9 · pace target</a></div></dd>
+      <dt>Applies to</dt><dd><p>Pace, offensive and defensive efficiency, lineup ratings, and free-throw trips per possession.</p></dd>
+    </dl>
+  </article>
+
+  <!-- 4 -->
+  <article class="stage" id="stage-4" style="--c:var(--feat)">
+    <div class="stage-head"><span class="stage-no">04</span><h3>Shrunk player skill estimates</h3><span class="kind">feature · empirical Bayes</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip store" href="#stage-2">2 · box scores, tracking</a><a class="chip feat" href="#stage-3">3 · per-possession counts</a></div></dd>
+      <dt>Algorithm</dt><dd><p>For each player and each stat, decide its "true talent as of date t" the way DARKO does. Weight every past game by how recent it is, then shrink toward a prior for the player's role.</p>
+        <div class="formula">w_i   = λ^(days_since_game_i)                 # 0 &lt; λ &lt; 1, tuned per stat
+M     = Σ w_i · makes_i       A = Σ w_i · attempts_i
+p̂     = (M + α) / (A + α + β)                   # Beta(α, β) prior fit to the league, by role</div>
+        <p>For counting rates (turnovers, offensive rebounds, free-throw attempts per possession) we use the Gamma-Poisson version of the same idea.</p></dd>
+      <dt>Why the math holds</dt><dd><p>A Beta prior plus binomial makes and misses gives a Beta posterior, and the formula above is its mean. Shrinkage is just the optimal estimate given noise. A player shooting 40% from three on 100 attempts has a sampling standard deviation of √(0.4·0.6/100) ≈ 4.9 points. Most of a "hot streak" is noise, and this formula discounts it automatically. The decay λ is picked by minimizing log loss on the next game, so it is fitted, not guessed.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip feat" href="#stage-5">5 · box prior</a><a class="chip proj" href="#stage-8">8 · minutes history</a></div></dd>
+      <dt>Applies to</dt><dd><p>3P%, FT%, rim and mid-range FG%, usage, turnover rate, offensive rebound rate, free-throw rate, minutes per game.</p></dd>
+    </dl>
+  </article>
+
+  <!-- 5 -->
+  <article class="stage" id="stage-5" style="--c:var(--feat)">
+    <div class="stage-head"><span class="stage-no">05</span><h3>Player impact: RAPM with a box prior, for offense, defense and pace</h3><span class="kind">feature · ridge regression</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip feat" href="#stage-3">3 · stint rows</a><a class="chip feat" href="#stage-4">4 · skills → prior</a></div></dd>
+      <dt>Algorithm</dt><dd><p>One row per stint. The design matrix has an offense column and a defense column for every player: +1 if the player is on the court on that side. We solve a ridge regression pulled toward a prior instead of toward zero, which is how EPM and LEBRON work.</p>
+        <div class="formula">y_s  = 100 · points_s / possessions_s            # stint offensive rating
+β̂   = argmin  Σ_s r_s·poss_s·(y_s − x_sᵀβ)²  +  κ·‖β − β_prior‖²
+     = β_prior + (XᵀWX + κI)⁻¹ XᵀW (y − Xβ_prior)
+β_prior = SPM(skills from stage 4)              # linear model: skills → long-run RAPM
+r_s  = recency weight,  W = diag(r_s · poss_s)</div>
+        <p>We also fit a third model with the same X, where <code>y_s</code> = possessions per 48 minutes in that stint. That gives each player a <b>pace rating</b>. Most public systems don't publish one, and it is the direct input a totals model needs.</p></dd>
+      <dt>Why the math holds</dt><dd><p>Players who always share the court (a starting five) make the columns of X nearly collinear, so ordinary least squares returns huge, unstable numbers. Ridge is the same as putting a Gaussian prior N(β_prior, σ²/κ) on each rating and taking the most likely value. With little data a player sits near their box-score prior, and with lots of data the on-court results take over. Weighting by possessions makes long stints count more than 20-second ones.</p></dd>
+      <dt>Cadence</dt><dd><p>Refit nightly using only stints before that date. In backtests, refit for each simulated date, using a cache keyed by date.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip proj" href="#stage-9">9 · O_p, D_p, π_p per player</a></div></dd>
+      <dt>Applies to</dt><dd><p>Points per 100 possessions on offense and allowed on defense, plus possessions per 48 minutes, for every player.</p></dd>
+    </dl>
+  </article>
+
+  <!-- 6 -->
+  <article class="stage" id="stage-6" style="--c:var(--feat)">
+    <div class="stage-head"><span class="stage-no">06</span><h3>Referee crew effects</h3><span class="kind">feature · mixed-effects model</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip store" href="#stage-2">2 · crew per game</a><a class="chip feat" href="#stage-3">3 · FTA and possessions per game</a></div></dd>
+      <dt>Algorithm</dt><dd><p>A model with random effects for each referee, fit on free-throw attempts per possession and on pace, controlling for the two teams.</p>
+        <div class="formula">FTr_g = μ + team_home + team_away + Σ_{ref ∈ crew_g} u_ref + ε
+u_ref ~ N(0, τ²)                                # shrinkage toward 0 is learned from the data</div></dd>
+      <dt>Why the math holds</dt><dd><p>A referee works about 60 to 70 games a season, crews rotate, and team styles get mixed in. A raw "this ref's games average 228" number is mostly noise. Random effects shrink each referee toward average in proportion to how much data we have, the same idea as stage 4. Expect a small effect, and we keep it only if stage 13 says it helps.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip proj" href="#stage-9">9 · pace and FT adjustments</a></div></dd>
+      <dt>Watch out</dt><dd><div class="trap"><b>Timing</b>Crews are posted the morning of the game. If we bet the night before, this feature doesn't exist yet. It depends on open question 2.</div></dd>
+    </dl>
+  </article>
+
+  <!-- 7 -->
+  <article class="stage" id="stage-7" style="--c:var(--feat)">
+    <div class="stage-head"><span class="stage-no">07</span><h3>Schedule context: rest, travel, altitude</h3><span class="kind">feature · deterministic</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip store" href="#stage-2">2 · schedule</a><a class="chip src" href="#stage-1">1 · arena table</a></div></dd>
+      <dt>Algorithm</dt><dd><p>Pure functions of the schedule: days of rest, back-to-back, 3 games in 4 nights, km traveled since the last game (haversine distance between arenas), time-zone shift, altitude of the venue, home or away, and week of the season.</p>
+        <div class="formula">d = 2R · asin( √( sin²(Δφ/2) + cos φ₁ · cos φ₂ · sin²(Δλ/2) ) )   # R = 6371 km</div></dd>
+      <dt>Why</dt><dd><p>FiveThirtyEight found rest worth about 46 Elo points and modeled travel and altitude separately. The early-season study found week-1 unders hit 58.2%, so week of season goes in as a feature. These are cheap, exact and known far in advance.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip proj" href="#stage-8">8 · rest affects minutes</a><a class="chip proj" href="#stage-9">9 · pace and efficiency adjustments</a></div></dd>
+    </dl>
+  </article>
+
+  <!-- 8 -->
+  <article class="stage" id="stage-8" style="--c:var(--proj)">
+    <div class="stage-head"><span class="stage-no">08</span><h3>Availability and minutes projector</h3><span class="kind">projection · logistic + gradient boosting</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip store" href="#stage-2">2 · injury snapshots as of t</a><a class="chip feat" href="#stage-4">4 · decayed minutes</a><a class="chip feat" href="#stage-7">7 · rest</a></div></dd>
+      <dt>Algorithm</dt><dd><p>Two steps. First, the probability each player plays, given their latest report status, from a logistic regression on historical status → played outcomes. Second, minutes given that they play, from a LightGBM regressor (recent minutes, starter flag, rest, teammates out, spread as a blowout proxy). Then renormalize so each team's expected minutes sum to 240.</p>
+        <div class="formula">P(play_p) = σ(a_status + b·x_p)
+E[min_p]  = P(play_p) · ĝ(x_p)                 # ĝ = gradient-boosted minutes model
+scale so  Σ_p E[min_p] = 240 per team          # 5 players × 48 minutes</div></dd>
+      <dt>Why</dt><dd><p>Who plays moves a total more than anything else, and it is where the market is slowest (late scratches). This is the job of RAPTOR's depth-chart algorithm and of Voulgaris's "Van Gundy" model. Gradient boosting fits the nonlinear parts (a starter's minutes collapse when the game is a blowout), and the renormalization keeps the minutes physically possible.</p></dd>
+      <dt>Watch out</dt><dd><div class="trap"><b>Leakage trap</b>Never mark a player "out" because the box score shows 0 minutes. That uses the result. Availability comes only from the injury report snapshot taken before t.</div></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip proj" href="#stage-9">9 · minute weights w_p</a></div></dd>
+    </dl>
+  </article>
+
+  <!-- 9 -->
+  <article class="stage" id="stage-9" style="--c:var(--proj)">
+    <div class="stage-head"><span class="stage-no">09</span><h3>Game projection: pace × points per possession</h3><span class="kind">projection · Poisson GLM + additive ratings</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip feat" href="#stage-5">5 · O_p, D_p, π_p</a><a class="chip feat" href="#stage-6">6 · referee effects</a><a class="chip feat" href="#stage-7">7 · context</a><a class="chip proj" href="#stage-8">8 · minutes</a><a class="chip feat" href="#stage-3">3 · actual possessions (training target)</a></div></dd>
+      <dt>Algorithm</dt><dd><p>Weight every player's rating by their share of the game, w_p = E[min_p] / 48, so the five on-court slots sum to 5.</p>
+        <div class="formula">log E[poss] = c₀ + Σ_{p∈A∪B} w_p·π_p + γᵀ·context + u_ref_pace     # Poisson GLM
+ORtg_A      = L + Σ_{p∈A} w_p·O_p − Σ_{q∈B} w_q·D_q + h_home + δᵀ·context + u_ref_FT
+ORtg_B      = same, with the teams swapped
+μ           = E[poss] · (ORtg_A + ORtg_B) / 100                       # projected total</div></dd>
+      <dt>Why the math holds</dt><dd><p>Pace is a count, so we fit it with a Poisson model on the log scale. Two fast teams compound multiplicatively instead of adding. Efficiency is additive in player ratings because that is exactly how RAPM was fit in stage 5, so we're using the ratings on the same scale they were learned on. The total then follows from the definition: possessions times points per possession.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip prob" href="#stage-10">10 · μ, plus pace and spread for σ</a></div></dd>
+    </dl>
+  </article>
+
+  <!-- 10 -->
+  <article class="stage" id="stage-10" style="--c:var(--prob)">
+    <div class="stage-head"><span class="stage-no">10</span><h3>Distribution of the total</h3><span class="kind">probability · heteroscedastic normal, later simulation</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip proj" href="#stage-9">9 · μ, E[poss], projected margin</a></div></dd>
+      <dt>Algorithm</dt><dd><p>Version 1 treats the total as normal with a mean from stage 9 and a standard deviation that depends on the game. A second small model predicts σ from pace and projected margin, since blowouts empty the benches and close games bring late fouling and overtime.</p>
+        <div class="formula">T ~ Normal(μ, σ_g²)
+P(over L) = 1 − Φ( (L + 0.5 − μ) / σ_g )     # L + 0.5 handles a push on whole-number lines
+baseline σ: closing totals miss by MAE ≈ 13.8 pts, and for a normal MAE = σ·√(2/π)
+            ⇒ σ ≈ 13.8 / 0.798 ≈ 17.3 pts</div>
+        <p>Version 2 is a possession-by-possession Monte Carlo simulation like Voulgaris's Ewing. It captures fat tails and overtime (an extra ~20 points in roughly 6% of games), which a normal curve misses.</p></dd>
+      <dt>Why</dt><dd><p>The bet is on a line, not a point estimate. A 2-point edge means very different things when σ is 14 versus 20, and the probability is what stage 12 needs to size the bet.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip prob" href="#stage-11">11 · raw P(over)</a></div></dd>
+    </dl>
+  </article>
+
+  <!-- 11 -->
+  <article class="stage" id="stage-11" style="--c:var(--prob)">
+    <div class="stage-head"><span class="stage-no">11</span><h3>Calibration and market blend</h3><span class="kind">probability · isotonic regression + shrinkage</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip prob" href="#stage-10">10 · raw P(over), μ</a><a class="chip store" href="#stage-2">2 · current line as of t</a><a class="chip dec" href="#stage-13">13 · out-of-fold history</a></div></dd>
+      <dt>Algorithm</dt><dd><p>First, shrink the model's mean toward the market's number, with a weight k learned walk-forward. Then fit an isotonic calibration map on past out-of-fold predictions, so that "60%" really means 60%.</p>
+        <div class="formula">μ_final = L_market + k · (μ_model − L_market)       # k ∈ [0, 1], fit walk-forward
+p_cal   = isotonic( P(over L | μ_final, σ_g) )</div></dd>
+      <dt>Why the math holds</dt><dd><p>The market is efficient, so most of the gap between our number and the line is our own error. k measures how much of that gap is real signal: k = 0 means the model adds nothing, and k = 0.3 means 30% of our disagreement holds up. That is the most honest single number in the project. Walsh and Joshi found that choosing models by calibration returned +34.7% where choosing by accuracy returned −35.2%. Isotonic regression is used because it only assumes the map is monotone, nothing about its shape.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip dec" href="#stage-12">12 · calibrated P(over), P(under)</a></div></dd>
+    </dl>
+  </article>
+
+  <!-- 12 -->
+  <article class="stage" id="stage-12" style="--c:var(--dec)">
+    <div class="stage-head"><span class="stage-no">12</span><h3>Bet decision and sizing</h3><span class="kind">decision · expected value + fractional Kelly</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip prob" href="#stage-11">11 · p_cal</a><a class="chip store" href="#stage-2">2 · price on offer as of t</a></div></dd>
+      <dt>Algorithm</dt><dd>
+        <div class="formula">break-even at −110:  p_be = 110 / 210 = 0.5238
+edge = p_cal − p_be ;  bet only if edge &gt; τ             # τ tuned in stage 13
+Kelly: f* = (b·p − q) / b,  b = 100/110 = 0.909,  q = 1 − p
+example p = 0.55 → f* = (0.909·0.55 − 0.45) / 0.909 ≈ 5.5% → stake ¼ Kelly ≈ 1.4% of bankroll</div>
+        <p>Every bet is logged with the line and price taken and the timestamp, so stage 13 can compare it with the close.</p></dd>
+      <dt>Why</dt><dd><p>Full Kelly maximizes long-run growth only if p is exactly right. Ours is estimated, so we take a quarter of it, which gives up a little growth for much smaller drawdowns.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip dec" href="#stage-13">13 · bet log</a></div></dd>
+    </dl>
+  </article>
+
+  <!-- 13 -->
+  <article class="stage" id="stage-13" style="--c:var(--fg)">
+    <div class="stage-head"><span class="stage-no">13</span><h3>Walk-forward evaluation</h3><span class="kind">evaluation · the backtest harness</span></div>
+    <dl class="spec">
+      <dt>From</dt><dd><div class="chips"><a class="chip dec" href="#stage-12">12 · bet log</a><a class="chip prob" href="#stage-11">11 · every prediction</a><a class="chip store" href="#stage-2">2 · closing lines, final scores</a></div></dd>
+      <dt>Algorithm</dt><dd><p>An expanding-window replay. For each date d in the test seasons, set the clock to the decision time, run stages 3 to 12 using only data available then, record predictions and bets, then step to d + 1. Never use random K-fold, which shuffles the future into training.</p>
+        <div class="formula">metrics per season and overall:
+  MAE(μ_final, final total)   vs   MAE(closing line, final total)
+  Brier, log loss of p_cal    vs   the market's no-vig probability
+  calibration: reliability curve, expected calibration error
+  CLV  = signed(close − line taken)   in points, averaged over bets
+  ROI  with a 95% bootstrap confidence interval, plus number of bets
+sample size: SE of win rate = √(p(1−p)/n); at n = 1000, p = 0.55 → 1.6 pts
+             so 55% vs 52.4% is only about 1.7 standard errors apart</div></dd>
+      <dt>Why</dt><dd><p>This is what kept the best models honest (EPM publishes live MAE separately from its backtest MAE). Closing line value settles much faster than win rate, so it's our early warning. New features go in one family at a time and stay only if they improve out-of-sample numbers.</p></dd>
+      <dt>To</dt><dd><div class="chips"><a class="chip feat" href="#stage-3">back to 3 to 11 · keep or drop features, retune λ, κ, k, τ</a></div></dd>
+    </dl>
+  </article>
+</section>
+
+<section class="note">
+  <h2>Where deep learning fits</h2>
+  <p>We'll have about 1,230 games a season, so roughly 15,000 games from 2013-14 on. That's small for a neural net trained on game rows, and on tabular data like this, structured models and gradient boosting usually win. Deep learning earns its place one level down, where the data is large: millions of possessions and tracking frames. A sequence model over possessions (for example, a transformer predicting points per possession from the 10 players and game state) can become a new feature for stage 9 or the engine for the stage 10 simulation. It goes in the same way as everything else, only if stage 13 says it beats what's there.</p>
+</section>
+
+<section class="questions" id="questions">
+  <h2>Open questions before we build</h2>
+  <p>There are no gaps between the stages, but three inputs depend on choices only you can make.</p>
+  <ol>
+    <li><b>Historical odds source.</b> Stages 11 to 13 need opening and closing totals for every past game. Free options are community archives (closing lines only, quality varies, they mostly stop around 2022-23). Paid options are services like The Odds API, which has historical snapshots from about mid-2020 plus live lines. Is a paid data budget OK?</li>
+    <li><b>When do you place bets?</b> This sets the decision time t, which decides which injury reports and referee crews exist yet, and which line we compare against. Night before, morning of, or about an hour before tip-off?</li>
+    <li><b>Which seasons?</b> I'd start at 2013-14, when tracking data begins, and hold out the last two seasons as the true test that we look at as rarely as possible.</li>
+  </ol>
+</section>
+
+<footer>Design spec v0.1 for the nba-deep-learning repo. Numbers cited: possession error from Squared Statistics (2017), the 13.8-point totals MAE from Joe Ferrara (2020), rest at 46 Elo from FiveThirtyEight, week-1 unders at 58.2% from Girdner et al. (2013), calibration ROI from Walsh &amp; Joshi (2024). Full sources are in the research report.</footer>
+
+</div>
