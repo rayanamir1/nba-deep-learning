@@ -12,7 +12,7 @@ T0 = datetime(2022, 10, 20, 23, tzinfo=timezone.utc)
 N_TEAMS = 8
 
 
-def world(seed=0, days=160):
+def world(seed=0, days=160, drift=0.0):
     """Eight teams with known pace and offense/defense effects; games simulated from the model's own form."""
     rng = np.random.default_rng(seed)
     pace = rng.normal(0, 0.04, N_TEAMS)
@@ -25,8 +25,9 @@ def world(seed=0, days=160):
         for k in range(0, N_TEAMS, 2):
             h, a = int(order[k]), int(order[k + 1])
             poss = np.exp(np.log(98) + pace[h] + pace[a]) * rng.normal(1, 0.01)
-            ph = rng.poisson(poss * np.exp(np.log(1.12) + off[h] + dfn[a] + 0.02))
-            pa = rng.poisson(poss * np.exp(np.log(1.12) + off[a] + dfn[h]))
+            lift = 1 + drift * d / days  # league-wide scoring drifts upward over time
+            ph = rng.poisson(lift * poss * np.exp(np.log(1.12) + off[h] + dfn[a] + 0.02))
+            pa = rng.poisson(lift * poss * np.exp(np.log(1.12) + off[a] + dfn[h]))
             gid = f"g{d}-{k}"
             av = wh.result_available_at(tip.date(), tip)
             games.append({"game_id": gid, "season": "2022-23", "season_type": "regular", "game_date": tip.date(),
@@ -118,3 +119,19 @@ def test_model_passes_the_harness_leak_check():
     # rows after day 60 only; leak check on every 20th game proves nothing future leaks into fit/predict
     df = replay(con, model, ["2022-23"], final=True, leak_check_every=20)
     assert len(df) > 200 and df.p_over.between(0, 1).all()
+
+
+def test_level_offset_tracks_league_drift():
+    _, _, _, games, tgs = world(days=200, drift=0.10)
+    con = wh.connect(":memory:")
+    load(con, games, tgs)
+    t = T0 + timedelta(days=201)
+    recent_actual = (games.tail(40).home_pts + games.tail(40).away_pts).mean()
+    bias = {}
+    for name, level_hl in (("tracking", 30.0), ("stale", 1e6)):
+        m = TeamRatingsModel(half_life_days=1e6, level_half_life_days=level_hl, alpha_pace=1e-3, alpha_eff=1e-3)
+        with wh.point_in_time(con, t) as c:
+            m.fit(c, t)
+        bias[name] = abs(np.mean([m._mean_total(h, a) for h, a in zip(games.tail(40).home_team_id, games.tail(40).away_team_id)])
+                         - recent_actual)
+    assert bias["tracking"] < 0.4 * bias["stale"] and bias["tracking"] < 6

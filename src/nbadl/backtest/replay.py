@@ -16,6 +16,7 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
+from .. import config
 from .. import warehouse as wh
 from . import metrics
 
@@ -105,8 +106,10 @@ def leak_check(con, model: Model, game: dict, t: datetime) -> None:
 
 
 def replay(con, model: Model, seasons: list[str], *, refit_days: int = 7,
-           decision_offset: timedelta = timedelta(hours=1), final: bool = False,
+           decision_offset: timedelta = config.HISTORICAL_OPEN_LINE_LEAD - timedelta(minutes=1), final: bool = False,
            leak_check_every: int = 250) -> pd.DataFrame:
+    # Default decision time = one minute after the opener becomes knowable. Deciding later would let the model see
+    # hours of newer information than the price it bets at (history only has an open and a close snapshot).
     locked = sorted(set(seasons) & set(holdout_seasons(con)))
     if locked and not final:
         raise HoldoutLockedError(f"{locked} is the final holdout; pass final=True to score it (once, at the end)")
