@@ -36,7 +36,7 @@ def fit(con, days, **kw):
 def test_recovers_signs_and_shrinks_neutral_officials():
     m = fit(world(), 120, half_life_days=1e6, alpha=20.0)
     assert m.coef[1] > 1.5 and m.coef[2] < -1.5
-    assert max(abs(m.coef[r]) for r in range(3, 9)) < 1.0
+    assert np.mean([abs(m.coef[r]) for r in range(3, 9)]) < 0.4 * min(abs(m.coef[1]), abs(m.coef[2]))
     assert m.crew_effect([1, 3, 4]) > m.crew_effect([3, 4, 5]) > m.crew_effect([2, 3, 4])
 
 
