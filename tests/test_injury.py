@@ -3,7 +3,9 @@ import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from nbadl.ingest.injury import InjuryIngest, key_for, parse_report, game_days_with_eve
+import pytest
+
+from nbadl.ingest.injury import BlockedError, InjuryIngest, key_for, parse_report, game_days_with_eve
 from nbadl.lake import RawLake
 
 FIX = Path(__file__).parent / "fixtures"
@@ -65,7 +67,7 @@ class FakeSession:
 def test_missing_report_is_recorded_once(tmp_path):
     lake = RawLake(tmp_path)
     s = FakeSession(404)
-    ing = InjuryIngest(lake, session=s)
+    ing = InjuryIngest(lake, session=s, interval_s=0)
     ing.fetch(date(2020, 2, 10), 4, "AM")
     ing.fetch(date(2020, 2, 10), 4, "AM")
     assert s.calls == 1
@@ -105,3 +107,31 @@ def test_build_matches_players_and_games_and_delays_availability(tmp_path):
     assert row[0] == 1630217 and row[1] == "0022200600" and row[2] == "Out"
     assert row[4] - row[3] == config.INJURY_PUBLISH_LAG
     assert stats["reports"] == 1 and stats["rows"] > 100
+
+
+class ScriptedSession:
+    """403 for everything except the canary (and, if blocked=False, the canary succeeds)."""
+
+    def __init__(self, blocked):
+        self.blocked, self.urls = blocked, []
+
+    def get(self, url, timeout=0):
+        self.urls.append(url)
+        canary = "2025-01-15_05PM" in url
+        status = 403 if (self.blocked or not canary) else 200
+        return type("R", (), {"status_code": status, "content": b"", "raise_for_status": lambda s: None})()
+
+
+def test_403_while_blocked_records_nothing_and_stops(tmp_path):
+    lake = RawLake(tmp_path)
+    ing = InjuryIngest(lake, session=ScriptedSession(blocked=True), interval_s=0, block_wait_s=0, max_waits=2)
+    with pytest.raises(BlockedError):
+        ing.fetch(date(2023, 1, 15), 5, "PM")
+    assert not lake.exists("injury", key_for(date(2023, 1, 15), 5, "PM"))  # never mislabeled as "missing"
+
+
+def test_403_while_canary_works_means_the_report_does_not_exist(tmp_path):
+    lake = RawLake(tmp_path)
+    ing = InjuryIngest(lake, session=ScriptedSession(blocked=False), interval_s=0)
+    ing.fetch(date(2020, 2, 10), 4, "AM")
+    assert lake.read("injury", key_for(date(2020, 2, 10), 4, "AM")).payload == {"missing": True}

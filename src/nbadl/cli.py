@@ -20,7 +20,7 @@ from . import config
 from . import warehouse as wh
 from .build import build_all
 from .ingest.nba_stats import SEASON_TYPES, NbaStatsIngest, result_set
-from .ingest.injury import InjuryIngest, game_days_with_eve
+from .ingest.injury import COARSE_HOURS, HOURS, InjuryIngest, game_days_with_eve
 from .ingest.sbr import SbrIngest
 from .lake import RawLake
 
@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("pull-games"); p.add_argument("--first", type=int, default=config.FIRST_SEASON); p.add_argument("--last", type=int, required=True)
     p = sub.add_parser("pull-games-detail"); p.add_argument("--season", required=True); p.add_argument("--limit", type=int)
     p = sub.add_parser("pull-odds"); p.add_argument("--start", required=True); p.add_argument("--end", required=True)
-    p = sub.add_parser("pull-injuries"); p.add_argument("--start", required=True); p.add_argument("--end", required=True)
+    p = sub.add_parser("pull-injuries"); p.add_argument("--start", required=True); p.add_argument("--end", required=True); p.add_argument("--hours", choices=["coarse", "all"], default="coarse")
     sub.add_parser("snapshot-odds")
     sub.add_parser("build")
     args = ap.parse_args(argv)
@@ -83,9 +83,10 @@ def main(argv: list[str] | None = None) -> None:
         con = wh.connect()
         game_dates = [r[0] for r in con.execute("SELECT DISTINCT game_date FROM games WHERE game_date BETWEEN ? AND ?",
                                                 [start, end]).fetchall()]
+        con.close()  # do not hold the warehouse lock for the whole pull
         days = game_days_with_eve(game_dates, start, end)
-        logging.info("injury reports: %d days x hourly", len(days))
-        InjuryIngest(lake).pull_days(days)
+        logging.info("injury reports: %d days, %s hours", len(days), args.hours)
+        InjuryIngest(lake).pull_days(days, HOURS if args.hours == "all" else COARSE_HOURS)
 
     elif args.cmd == "snapshot-odds":
         key = SbrIngest(lake).snapshot(date.today())

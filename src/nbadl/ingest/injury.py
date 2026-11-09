@@ -17,7 +17,6 @@ import io
 import logging
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -30,6 +29,7 @@ log = logging.getLogger(__name__)
 
 URL = "https://ak-static.cms.nba.com/referee/injury/Injury-Report_{d}_{h:02d}{ap}.pdf"
 HOURS = [(h, "AM") for h in range(6, 12)] + [(12, "PM")] + [(h, "PM") for h in range(1, 12)] + [(12, "AM")]
+COARSE_HOURS = [(6, "AM"), (9, "AM"), (12, "PM"), (3, "PM"), (5, "PM"), (8, "PM"), (11, "PM")]
 STATUSES = {"out", "doubtful", "questionable", "probable", "available"}
 ET = ZoneInfo("America/New_York")
 RETRIES, BACKOFF_S, TOL = 3, 3.0, 4.0
@@ -161,26 +161,55 @@ def parse_report(pages: list[list[list]]) -> dict[str, Any]:
     return {"report_at": report_time(pages), "rows": rows}
 
 
+class BlockedError(RuntimeError):
+    """The CDN is refusing us (a known-good report also returns 403). Stop and wait; do not record anything."""
+
+
+CANARY = date(2025, 1, 15), 5, "PM"  # a report known to exist
+
+
 class InjuryIngest:
-    def __init__(self, lake: RawLake | None = None, session: requests.Session | None = None, workers: int = 4):
+    def __init__(self, lake: RawLake | None = None, session: requests.Session | None = None,
+                 interval_s: float = 0.7, block_wait_s: float = 300.0, max_waits: int = 12):
         self.lake = lake or RawLake()
         self.session = session or requests.Session()
-        self.workers = workers
+        self.interval_s, self.block_wait_s, self.max_waits = interval_s, block_wait_s, max_waits
+
+    def _get(self, d: date, hour: int, ap: str):
+        time.sleep(self.interval_s)
+        return self.session.get(URL.format(d=d.isoformat(), h=hour, ap=ap), timeout=30)
+
+    def _blocked(self) -> bool:
+        """True if a report that certainly exists is refused too, i.e. the 403 means 'you', not 'no such report'."""
+        return self._get(*CANARY).status_code == 403
 
     def fetch(self, d: date, hour: int, ap: str) -> str:
         key = key_for(d, hour, ap)
         if self.lake.exists("injury", key):
             return key
-        url = URL.format(d=d.isoformat(), h=hour, ap=ap)
+        waits = 0
         for attempt in range(RETRIES + 1):
             try:
-                r = self.session.get(url, timeout=30)
-                if r.status_code in (403, 404):  # S3-style "no such report"
+                r = self._get(d, hour, ap)
+                if r.status_code == 403:
+                    if self._blocked():
+                        waits += 1
+                        if waits > self.max_waits:
+                            raise BlockedError("CDN keeps refusing requests; rerun later (the pull is resumable)")
+                        log.warning("injury: blocked by CDN, waiting %ds", self.block_wait_s)
+                        time.sleep(self.block_wait_s)
+                        continue
+                    self.lake.write("injury", key, {"missing": True})  # canary fine: this report does not exist
+                    return key
+                if r.status_code == 404:
                     self.lake.write("injury", key, {"missing": True})
                     return key
                 r.raise_for_status()
-                self.lake.write("injury", key, {"url": url, "pages": pdf_words(r.content)})
+                self.lake.write("injury", key, {"url": URL.format(d=d.isoformat(), h=hour, ap=ap),
+                                                "pages": pdf_words(r.content)})
                 return key
+            except BlockedError:
+                raise
             except (requests.RequestException, OSError) as e:
                 if attempt == RETRIES:
                     raise
@@ -188,19 +217,17 @@ class InjuryIngest:
                 time.sleep(BACKOFF_S * 2 ** attempt)
         return key
 
-    def pull_days(self, days: list[date]) -> None:
-        jobs = [(d, h, ap) for d in days for h, ap in HOURS]
-        done = 0
-        with ThreadPoolExecutor(self.workers) as ex:
-            futs = [ex.submit(self.fetch, *j) for j in jobs]
-            for f in futs:
-                try:
-                    f.result()
-                except Exception as e:  # rerun retries whatever failed
-                    log.error("injury fetch failed: %s", e)
-                done += 1
-                if done % 500 == 0:
-                    log.info("injury: %d/%d reports", done, len(jobs))
+    def pull_days(self, days: list[date], hours=None) -> None:
+        jobs = [(d, h, ap) for d in days for h, ap in (hours or HOURS)]
+        for i, job in enumerate(jobs, 1):
+            try:
+                self.fetch(*job)
+            except BlockedError:
+                raise
+            except Exception as e:  # rerun retries whatever failed
+                log.error("injury fetch failed: %s", e)
+            if i % 200 == 0:
+                log.info("injury: %d/%d reports", i, len(jobs))
 
 
 def game_days_with_eve(game_dates: list[date], start: date, end: date) -> list[date]:
