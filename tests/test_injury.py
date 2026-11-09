@@ -1,0 +1,77 @@
+import gzip
+import json
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+from nbadl.ingest.injury import InjuryIngest, key_for, parse_report, game_days_with_eve
+from nbadl.lake import RawLake
+
+FIX = Path(__file__).parent / "fixtures"
+DET, NYK, GSW, WAS, PHI = 1610612765, 1610612752, 1610612744, 1610612764, 1610612755
+
+
+def load(name):
+    with gzip.open(FIX / f"injury_{name}.json.gz", "rt") as f:
+        return json.load(f)
+
+
+def test_2023_report_time_and_first_rows():
+    r = parse_report(load("a"))
+    assert r["report_at"] == datetime(2023, 1, 15, 22, 30, tzinfo=timezone.utc)  # 05:30 PM ET
+    first = r["rows"][0]
+    assert (first["team_id"], first["player"], first["status"], first["matchup"]) == (DET, "Bagley III, Marvin", "Out", "NYK@DET")
+    assert {x["status"] for x in r["rows"]} <= {"Out", "Doubtful", "Questionable", "Probable", "Available"}
+
+
+def test_not_yet_submitted_line_still_sets_the_game_block():
+    # Washington's rows sit under a 'GSW@WAS ... NOT YET SUBMITTED' line: they must belong to GSW@WAS
+    rows = parse_report(load("a"))["rows"]
+    beal = next(x for x in rows if x["player"].startswith("Beal"))
+    assert beal["matchup"] == "GSW@WAS" and beal["team_id"] == WAS
+
+
+def test_2019_layout_with_previous_status_column():
+    r = parse_report(load("b"))
+    assert r["report_at"] == datetime(2019, 12, 10, 22, 30, tzinfo=timezone.utc)
+    bryant = next(x for x in r["rows"] if x["player"].startswith("Bryant"))  # reason wraps onto the next line
+    assert bryant["status"] == "Out" and bryant["matchup"] == "WAS@CHA"
+
+
+def test_2025_layout_has_spaces_stripped():
+    rows = parse_report(load("c"))["rows"]
+    brunson = next(x for x in rows if x["player"] == "Brunson,Jalen")
+    assert (brunson["team_id"], brunson["status"], brunson["game_time_et"]) == (NYK, "Probable", "07:00")
+    embiid = next(x for x in rows if x["player"] == "Embiid,Joel")
+    assert embiid["team_id"] == PHI  # team label carried down from a mid-block row
+
+
+def test_every_block_has_at_most_two_teams():
+    for name in "abc":
+        by = {}
+        for x in parse_report(load(name))["rows"]:
+            by.setdefault((x["game_date"], x["matchup"]), set()).add(x["team_id"])
+        assert all(len(v) <= 2 for v in by.values())
+
+
+class FakeSession:
+    def __init__(self, status):
+        self.status, self.calls = status, 0
+
+    def get(self, url, timeout=0):
+        self.calls += 1
+        return type("R", (), {"status_code": self.status, "content": b"", "raise_for_status": lambda s: None})()
+
+
+def test_missing_report_is_recorded_once(tmp_path):
+    lake = RawLake(tmp_path)
+    s = FakeSession(404)
+    ing = InjuryIngest(lake, session=s)
+    ing.fetch(date(2020, 2, 10), 4, "AM")
+    ing.fetch(date(2020, 2, 10), 4, "AM")
+    assert s.calls == 1
+    assert lake.read("injury", key_for(date(2020, 2, 10), 4, "AM")).payload == {"missing": True}
+
+
+def test_days_include_the_eve_of_each_game_day():
+    days = game_days_with_eve([date(2020, 2, 10), date(2020, 2, 12)], date(2020, 2, 1), date(2020, 3, 1))
+    assert days == [date(2020, 2, 9), date(2020, 2, 10), date(2020, 2, 11), date(2020, 2, 12)]

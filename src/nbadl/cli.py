@@ -3,6 +3,7 @@
   nbadl pull-games  --first 2013 --last 2025      games + schedule per season
   nbadl pull-games-detail --season 2023-24        play-by-play V3 + summary V3 (officials, roster) per game
   nbadl pull-odds   --start 2013-10-29 --end 2014-06-15   SBR history, one page per date
+  nbadl pull-injuries --start 2019-10-01 --end 2026-06-30   hourly injury-report PDFs on game days
   nbadl snapshot-odds                              today's SBR lines, timestamped (run on a schedule)
   nbadl build                                      lake -> warehouse, prints data-quality stats
 
@@ -19,6 +20,7 @@ from . import config
 from . import warehouse as wh
 from .build import build_all
 from .ingest.nba_stats import SEASON_TYPES, NbaStatsIngest, result_set
+from .ingest.injury import InjuryIngest, game_days_with_eve
 from .ingest.sbr import SbrIngest
 from .lake import RawLake
 
@@ -38,6 +40,7 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("pull-games"); p.add_argument("--first", type=int, default=config.FIRST_SEASON); p.add_argument("--last", type=int, required=True)
     p = sub.add_parser("pull-games-detail"); p.add_argument("--season", required=True); p.add_argument("--limit", type=int)
     p = sub.add_parser("pull-odds"); p.add_argument("--start", required=True); p.add_argument("--end", required=True)
+    p = sub.add_parser("pull-injuries"); p.add_argument("--start", required=True); p.add_argument("--end", required=True)
     sub.add_parser("snapshot-odds")
     sub.add_parser("build")
     args = ap.parse_args(argv)
@@ -74,6 +77,15 @@ def main(argv: list[str] | None = None) -> None:
         while d <= end:
             sbr.history(d)
             d += timedelta(days=1)
+
+    elif args.cmd == "pull-injuries":
+        start, end = date.fromisoformat(args.start), date.fromisoformat(args.end)
+        con = wh.connect()
+        game_dates = [r[0] for r in con.execute("SELECT DISTINCT game_date FROM games WHERE game_date BETWEEN ? AND ?",
+                                                [start, end]).fetchall()]
+        days = game_days_with_eve(game_dates, start, end)
+        logging.info("injury reports: %d days x hourly", len(days))
+        InjuryIngest(lake).pull_days(days)
 
     elif args.cmd == "snapshot-odds":
         key = SbrIngest(lake).snapshot(date.today())
