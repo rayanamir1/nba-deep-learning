@@ -211,3 +211,16 @@ def game_days_with_eve(game_dates: list[date], start: date, end: date) -> list[d
             if start <= x <= end:
                 s.add(x)
     return sorted(s)
+
+
+_SQUASHED_SUFFIX = re.compile(r"(?<=[a-z.])(Jr\.|Sr\.|III|II|IV)$")
+
+
+def full_name(report_name: str) -> str:
+    """'Bagley III, Marvin' / 'McCullarJr.,Kevin' -> 'Marvin Bagley III' / 'Kevin McCullar Jr.'."""
+    last, _, first = report_name.partition(",")
+    last, first = last.strip(), first.strip()
+    m = _SQUASHED_SUFFIX.search(last)
+    if m:
+        last = f"{last[: m.start()]} {m.group(1)}"
+    return f"{first} {last}".strip()

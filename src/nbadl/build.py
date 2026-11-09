@@ -12,11 +12,13 @@ from datetime import date, datetime, timedelta, timezone
 import duckdb
 import pandas as pd
 
+from . import config
 from . import warehouse as wh
 from .ingest.nba_stats import result_set
 from .ingest.sbr import parse_odds_tables
 from .lake import RawLake
-from .pbp_v3 import events_from_v3, roster_from_summary_v3, team_ids, unresolved_subs
+from .ingest.injury import full_name, parse_report
+from .pbp_v3 import _Names, events_from_v3, roster_from_summary_v3, team_ids, unresolved_subs
 from .possessions import parse_game
 
 log = logging.getLogger(__name__)
@@ -265,6 +267,54 @@ def load_odds_history(con, lake: RawLake) -> dict[str, int]:
     return {"rows": n, "unmatched_lines": unmatched}
 
 
+def roster_index(lake: RawLake) -> tuple[_Names, _Names]:
+    """(per-team, league-wide) name indexes from every game's roster. The league-wide one is the fallback for a
+    player reported under a team he has not yet played a game for (just traded)."""
+    by_team, league = _Names(), _Names()
+    for rec in lake.iter("summary_v3"):
+        for team, players in roster_from_summary_v3(rec.payload).items():
+            for p in players:
+                if p.get("personId"):
+                    by_team.add_roster_player(team, p)
+                    league.add_roster_player(0, p)
+    return by_team, league
+
+
+def load_injuries(con, lake: RawLake) -> dict[str, int]:
+    """Parse every stored injury report into one row per player listing, matched to player and game ids."""
+    by_team, league = roster_index(lake)
+    games = con.execute("SELECT game_id, game_date, home_team_id, away_team_id FROM games").df()
+    by_day_team: dict = {}
+    for r in games.itertuples(index=False):
+        d = pd.Timestamp(r.game_date).date()
+        by_day_team[(d, r.home_team_id)] = by_day_team[(d, r.away_team_id)] = r.game_id
+    rows, stats = [], {"reports": 0, "rows": 0, "unmatched_players": 0, "unmatched_games": 0}
+    for rec in lake.iter("injury"):
+        if rec.payload.get("missing"):
+            continue
+        rep = parse_report(rec.payload["pages"])
+        if rep["report_at"] is None:
+            continue
+        stats["reports"] += 1
+        avail = rep["report_at"] + config.INJURY_PUBLISH_LAG
+        for x in rep["rows"]:
+            name = full_name(x["player"])
+            pid = by_team.resolve(x["team_id"], name)
+            if pid is None:
+                pid = league.resolve(0, name)
+            gd = datetime.strptime(x["game_date"], "%m/%d/%Y").date() if x["game_date"] else None
+            gid = by_day_team.get((gd, x["team_id"]))
+            stats["unmatched_players"] += pid is None
+            stats["unmatched_games"] += gid is None
+            rows.append((rep["report_at"], gid, gd, x["team_id"], pid, x["player"], x["status"], avail))
+    stats["rows"] = len(rows)
+    df = pd.DataFrame(rows, columns=["report_at", "game_id", "game_date", "team_id", "player_id", "player_name",
+                                     "status", "available_at"])
+    df["player_id"] = df.player_id.astype("Int64")
+    _replace(con, "injuries", df)
+    return stats
+
+
 def build_all(con, lake: RawLake) -> dict:
     return {
         "schedule": load_schedule(con, lake),
@@ -273,4 +323,5 @@ def build_all(con, lake: RawLake) -> dict:
         "officials": load_officials(con, lake),
         "pbp": load_pbp(con, lake),
         "odds": load_odds_history(con, lake),
+        "injuries": load_injuries(con, lake),
     }

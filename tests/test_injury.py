@@ -75,3 +75,33 @@ def test_missing_report_is_recorded_once(tmp_path):
 def test_days_include_the_eve_of_each_game_day():
     days = game_days_with_eve([date(2020, 2, 10), date(2020, 2, 12)], date(2020, 2, 1), date(2020, 3, 1))
     assert days == [date(2020, 2, 9), date(2020, 2, 10), date(2020, 2, 11), date(2020, 2, 12)]
+
+
+def test_full_name_handles_suffixes_and_squashed_names():
+    from nbadl.ingest.injury import full_name
+    assert full_name("Bagley III, Marvin") == "Marvin Bagley III"
+    assert full_name("McCullarJr.,Kevin") == "Kevin McCullar Jr."
+    assert full_name("Brunson,Jalen") == "Jalen Brunson"
+    assert full_name("Alexander-Walker, Nickeil") == "Nickeil Alexander-Walker"
+
+
+def test_build_matches_players_and_games_and_delays_availability(tmp_path):
+    from nbadl import config, warehouse
+    from nbadl.build import load_injuries
+
+    lake = RawLake(tmp_path)
+    lake.write("injury", "2023-01-15_05PM", {"pages": load("a")})
+    roster = {"boxScoreSummary": {"homeTeam": {"teamId": DET, "players": [
+        {"personId": 1630217, "firstName": "Marvin", "familyName": "Bagley III", "nameI": "M. Bagley III",
+         "name": "Marvin Bagley III"}]}, "awayTeam": {"teamId": NYK, "players": []}}}
+    lake.write("summary_v3", "0022200600", roster)
+    con = warehouse.connect(":memory:")
+    tip = datetime(2023, 1, 15, 18, tzinfo=timezone.utc)
+    con.execute("INSERT INTO games VALUES ('0022200600','2022-23','regular','2023-01-15',?,?,100,100,?,?)",
+                [DET, NYK, tip, tip])
+    stats = load_injuries(con, lake)
+    row = con.execute("SELECT player_id, game_id, status, report_at, available_at FROM injuries "
+                      "WHERE player_name LIKE 'Bagley%'").fetchone()
+    assert row[0] == 1630217 and row[1] == "0022200600" and row[2] == "Out"
+    assert row[4] - row[3] == config.INJURY_PUBLISH_LAG
+    assert stats["reports"] == 1 and stats["rows"] > 100

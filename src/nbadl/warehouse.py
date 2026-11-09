@@ -9,6 +9,7 @@ Timestamp conventions (conservative: when unsure, make data available LATER):
   games / possessions / stints   tip + RESULT_DELAY, or the next morning if no tip time
   schedule (tip times)           known well in advance: tip - 30 days
   officials                      09:00 ET on game day (when the NBA posts crews)
+  injuries                       report time + INJURY_PUBLISH_LAG
   odds 'open' (SBR history)      tip - HISTORICAL_OPEN_LINE_LEAD (true post time unknown)
   odds 'close' (SBR history)     tip (never usable before the game starts)
   odds 'snapshot'                the moment we fetched it
@@ -50,6 +51,10 @@ CREATE TABLE IF NOT EXISTS odds_lines (
     total DOUBLE, over_odds INTEGER, under_odds INTEGER,
     observed_at TIMESTAMPTZ, available_at TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS injuries (
+    report_at TIMESTAMPTZ, game_id VARCHAR, game_date DATE, team_id BIGINT, player_id BIGINT,
+    player_name VARCHAR, status VARCHAR, available_at TIMESTAMPTZ NOT NULL
+);
 CREATE TABLE IF NOT EXISTS possessions (
     game_id VARCHAR, period INTEGER, idx INTEGER, offense_team_id BIGINT, defense_team_id BIGINT,
     start_clock_s DOUBLE, end_clock_s DOUBLE, points INTEGER, fga INTEGER, fta INTEGER,
@@ -64,7 +69,7 @@ CREATE TABLE IF NOT EXISTS stints (
 );
 """
 
-GUARDED_TABLES = ("games", "team_games", "schedule", "officials", "odds_lines", "possessions", "stints")
+GUARDED_TABLES = ("games", "team_games", "schedule", "officials", "injuries", "odds_lines", "possessions", "stints")
 
 
 def connect(path: Path | str | None = None) -> duckdb.DuckDBPyConnection:

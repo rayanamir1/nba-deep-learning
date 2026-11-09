@@ -28,6 +28,7 @@ def seasons(last_start_year: int, first: int = FIRST_SEASON) -> list[str]:
 # Conservative on purpose: if unsure, make data available LATER, never earlier.
 RESULT_DELAY = timedelta(hours=3)  # box score / play-by-play final ~ tip + 3h
 OFFICIALS_POSTED_HOUR_ET = 9  # NBA posts referee crews ~9:00 ET on game day
+INJURY_PUBLISH_LAG = timedelta(minutes=15)  # report stamped HH:30 is assumed usable 15 minutes later
 HISTORICAL_OPEN_LINE_LEAD = timedelta(hours=12)  # SBR history has no timestamp for the opener
 
 # Throttle for stats.nba.com; it bans aggressive clients.
