@@ -39,7 +39,8 @@ def stint_frame(con) -> pd.DataFrame:
 
 
 class Rapm:
-    def __init__(self, half_life_days: float = 365.0, alpha: float = 2000.0, min_weight: float = 0.01):
+    # defaults tuned on 2020-21..2021-22 by scripts/tune_player_layers.py (plateau at 120-180 days, alpha 2000-4000)
+    def __init__(self, half_life_days: float = 150.0, alpha: float = 3000.0, min_weight: float = 0.01):
         self.half_life_days, self.alpha, self.min_weight = half_life_days, alpha, min_weight
         self.table = pd.DataFrame(columns=["off", "def", "n_poss"])
         self.intercept = 0.0

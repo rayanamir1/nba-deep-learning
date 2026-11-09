@@ -52,7 +52,8 @@ def estimate_k(rate: np.ndarray, n: np.ndarray, league: float, sigma2: float) ->
 
 
 class PlayerSkills:
-    def __init__(self, half_life_days: float = 365.0, k_off: float | None = None, k_def: float | None = None,
+    # half-life tuned on 2020-21..2021-22 by scripts/tune_player_layers.py (longer was better, 1000 was the best grid point)
+    def __init__(self, half_life_days: float = 1000.0, k_off: float | None = None, k_def: float | None = None,
                  k_pace_seconds: float | None = None, min_weight: float = 0.01):
         self.half_life_days, self.min_weight = half_life_days, min_weight
         self.k_off, self.k_def, self.k_pace_seconds = k_off, k_def, k_pace_seconds
